@@ -25,7 +25,7 @@
     "minimist": "1.2.0",
     "moment": "2.21.0",
     "request": "^2.79.0",
-    "cryptoforknote-util": "git+https://github.com/MoneroOcean/node-cryptoforknote-util.git#v15.8.1",
+    "cryptoforknote-util": "git+https://github.com/MoneroOcean/node-cryptoforknote-util.git#v15.8.2",
     "cryptonight-hashing": "git+https://github.com/MoneroOcean/node-cryptonight-hashing.git#v29.0.6"
   }
 }
