@@ -122,7 +122,10 @@ class UpstreamPoolClient {
         this.lineParser = createLineParser({
             maxBufferBytes: this.config.maxJsonLineBytes,
             onOverflow: () => {
-                this.logger.warn(`Upstream pool ${this.hostname} exceeded the line buffer limit`);
+                this.logger.warn("pool.line_too_large", {
+                    host: this.hostname,
+                    limit: this.config.maxJsonLineBytes
+                });
                 socket.destroy(new Error("Pool response exceeded max buffer"));
             },
             onLine: (line) => this.handleLine(line)
@@ -132,14 +135,21 @@ class UpstreamPoolClient {
             this.connected = true;
             this.enabled = true;
             this.poolId = null;
-            this.logger.info(`Connected to pool ${this.hostname}:${this.port}`);
+            this.logger.info("pool.connect", {
+                host: this.hostname,
+                port: this.port,
+                tls: this.ssl
+            });
             this.master.broadcast({ type: "enablePool", pool: this.hostname });
             this.login();
         });
         socket.on("data", (chunk) => this.lineParser.push(chunk));
         socket.on("error", (error) => {
             if (this.stopping) return;
-            this.logger.warn(`Pool socket error from ${this.hostname}: ${error.message}`);
+            this.logger.warn("pool.socket_error", {
+                host: this.hostname,
+                error: error.message
+            });
         });
         socket.on("close", () => {
             if (this.stopping) return;
@@ -151,7 +161,10 @@ class UpstreamPoolClient {
     markUnavailable(reason) {
         this.connected = false;
         this.enabled = false;
-        this.logger.warn(`Pool ${this.hostname} is unavailable: ${reason}`);
+        this.logger.warn("pool.down", {
+            host: this.hostname,
+            reason
+        });
         this.master.broadcast({ type: "disablePool", pool: this.hostname });
     }
 
@@ -198,7 +211,11 @@ class UpstreamPoolClient {
 
         const now = Date.now();
         if (!this.lastCommonAlgoNotifyTime || (now - this.lastCommonAlgoNotifyTime) > 300_000 || prevAlgoKey !== nextAlgoKey) {
-            this.logger.info(`Setting common algo ${nextAlgoKey} with algo-perf ${nextPerfKey} for pool ${this.hostname}`);
+            this.logger.info("pool.algos", {
+                host: this.hostname,
+                algos: Object.keys(this.algos).join(","),
+                perf: Object.entries(this.algosPerf).map(([algo, value]) => `${algo}:${value}`).join(",")
+            });
             this.lastCommonAlgoNotifyTime = now;
         }
 
@@ -217,7 +234,9 @@ class UpstreamPoolClient {
         try {
             message = JSON.parse(line);
         } catch (_error) {
-            this.logger.warn(`Invalid JSON from pool ${this.hostname}: ${line}`);
+            this.logger.warn("pool.bad_json", {
+                host: this.hostname
+            });
             this.socket.destroy(new Error("Invalid pool JSON"));
             return;
         }
@@ -238,13 +257,22 @@ class UpstreamPoolClient {
             if (sendLog) this.sendLog.delete(message.id);
 
             if (this.isTemplatePendingError(message.error.message)) {
-                this.logger.warn(`Pool ${this.hostname} has no template for ${sendLog?.method || "request"} yet; retrying soon`);
+                this.logger.warn("pool.no_template_yet", {
+                    host: this.hostname,
+                    method: sendLog?.method || "request",
+                    retryMs: 2000
+                });
                 this.destroySocket();
                 this.scheduleConnect(2_000);
                 return;
             }
 
-            this.logger.error(`Pool ${this.hostname} returned an error`, message.error);
+            this.logger.error("pool.reply_error", {
+                host: this.hostname,
+                method: sendLog?.method,
+                code: message.error.code,
+                error: message.error.message
+            });
             if (typeof message.error.message === "string" && message.error.message.includes("Unauthenticated")) {
                 this.markUnavailable("upstream-unauthenticated");
                 this.destroySocket();
@@ -254,7 +282,10 @@ class UpstreamPoolClient {
         }
 
         if (!sendLog) {
-            this.logger.warn(`Ignoring unknown reply id ${message.id} from ${this.hostname}`);
+            this.logger.warn("pool.unknown_reply", {
+                host: this.hostname,
+                id: message.id
+            });
             return;
         }
         this.sendLog.delete(message.id);
@@ -262,7 +293,9 @@ class UpstreamPoolClient {
         switch (sendLog.method) {
         case "login":
             if (!message.result || !message.result.id || !message.result.job) {
-                this.logger.error(`Pool ${this.hostname} returned an invalid login response`, message);
+                this.logger.error("pool.login_invalid", {
+                    host: this.hostname
+                });
                 this.markUnavailable("invalid-login-response");
                 this.destroySocket();
                 this.scheduleConnect();
@@ -280,7 +313,10 @@ class UpstreamPoolClient {
         case "submit":
             return;
         default:
-            this.logger.warn(`Unhandled reply type ${sendLog.method} from ${this.hostname}`);
+            this.logger.warn("pool.reply_unhandled", {
+                host: this.hostname,
+                method: sendLog.method
+            });
         }
     }
 

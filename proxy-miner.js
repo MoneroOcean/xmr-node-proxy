@@ -192,7 +192,10 @@ class MinerProtocol {
         const parser = createLineParser({
             maxBufferBytes: this.runtime.config.maxJsonLineBytes,
             onOverflow: () => {
-                this.runtime.logger.warn(`Excessive packet size from ${socket.remoteAddress}`);
+                this.runtime.logger.warn("miner.line_too_large", {
+                    remote: socket.remoteAddress,
+                    limit: this.runtime.config.maxJsonLineBytes
+                });
                 socket.destroy(new Error("Packet exceeded max line length"));
             },
             onLine: (line) => {
@@ -201,7 +204,9 @@ class MinerProtocol {
                 try {
                     jsonData = JSON.parse(line);
                 } catch (_error) {
-                    this.runtime.logger.warn(`Malformed message from ${socket.remoteAddress}: ${line}`);
+                    this.runtime.logger.warn("miner.bad_json", {
+                        remote: socket.remoteAddress
+                    });
                     socket.destroy(new Error("Malformed miner JSON"));
                     return;
                 }
@@ -212,7 +217,10 @@ class MinerProtocol {
         socket.on("data", (chunk) => parser.push(chunk));
         socket.on("error", (error) => {
             if (error.code !== "ECONNRESET") {
-                this.runtime.logger.warn(`Miner socket error from ${socket.remoteAddress}: ${error.message}`);
+                this.runtime.logger.warn("miner.socket_error", {
+                    remote: socket.remoteAddress,
+                    error: error.message
+                });
             }
         });
         socket.on("close", () => {
@@ -241,11 +249,15 @@ class MinerProtocol {
     handleMessage(socket, request, portData, pushMessage) {
         if (!request || typeof request !== "object") return;
         if (!("id" in request)) {
-            this.runtime.logger.warn(`Miner RPC request missing id from ${socket.remoteAddress}`);
+            this.runtime.logger.warn("miner.rpc_missing_id", {
+                remote: socket.remoteAddress
+            });
             return;
         }
         if (typeof request.method !== "string") {
-            this.runtime.logger.warn(`Miner RPC request missing method from ${socket.remoteAddress}`);
+            this.runtime.logger.warn("miner.rpc_missing_method", {
+                remote: socket.remoteAddress
+            });
             return;
         }
 
@@ -297,7 +309,10 @@ class MinerProtocol {
         });
 
         if (!miner.validMiner) {
-            this.runtime.logger.warn(`Invalid miner ${miner.logString || socket.remoteAddress}: ${miner.error}`);
+            this.runtime.logger.warn("miner.login_rejected", {
+                miner: miner.logString || socket.remoteAddress,
+                reason: miner.error
+            });
             replyFinal(miner.error);
             return;
         }
@@ -382,14 +397,21 @@ class MinerProtocol {
             : (typeof params.nonce !== "string" || !(miner.coinAdapter.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX.test(params.nonce) : NONCE_32_HEX.test(params.nonce)));
 
         if (badNonce) {
-            this.runtime.logger.warn(`Malformed nonce from ${miner.logString}`, params);
+            this.runtime.logger.warn("share.bad_nonce", {
+                miner: miner.logString,
+                job: params.job_id
+            });
             reply("Duplicate share");
             return;
         }
 
         const nonceKey = isGrin ? params.pow.join(":") : params.nonce;
         if (job.submissions.includes(nonceKey)) {
-            this.runtime.logger.warn(`Duplicate share from ${miner.logString}`, params);
+            this.runtime.logger.warn("share.duplicate", {
+                miner: miner.logString,
+                job: params.job_id,
+                nonce: nonceKey
+            });
             reply("Duplicate share");
             return;
         }
@@ -401,7 +423,10 @@ class MinerProtocol {
             : poolState.pastBlockTemplates.toarray().find((entry) => entry.id === job.templateID);
 
         if (!blockTemplate) {
-            this.runtime.logger.warn(`Expired block for ${miner.logString} on height ${job.height}`);
+            this.runtime.logger.warn("share.expired", {
+                miner: miner.logString,
+                height: job.height
+            });
             if (miner.incremented === false) {
                 miner.newDiff = miner.difficulty + 1;
                 miner.incremented = true;
@@ -422,8 +447,8 @@ class MinerProtocol {
                     data
                 });
             },
-            warn: (message) => this.runtime.logger.warn(message),
-            info: (message) => this.runtime.logger.info(message)
+            warn: (message, meta) => this.runtime.logger.warn(message, meta),
+            info: (message, meta) => this.runtime.logger.info(message, meta)
         });
 
         if (accepted === null) {

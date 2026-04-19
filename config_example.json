@@ -6,9 +6,10 @@
       "ssl": false,
       "allowSelfSignedSSL": false,
       "share": 100,
-      "username": "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL",
+      "username": "YOUR_WALLET",
       "password": "proxy",
       "keepAlive": true,
+      "coin": "xmr",
       "algo": "rx/0",
       "algo_perf": { "rx/0": 1, "rx/loki": 1 },
       "blob_type": "cryptonote",
@@ -20,9 +21,10 @@
       "ssl": false,
       "allowSelfSignedSSL": false,
       "share": 0,
-      "username": "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL",
+      "username": "YOUR_WALLET",
       "password": "proxy",
       "keepAlive": true,
+      "coin": "xmr",
       "algo": "rx/0",
       "algo_perf": { "rx/0": 1 },
       "blob_type": "cryptonote",
@@ -34,9 +36,10 @@
       "ssl": false,
       "allowSelfSignedSSL": false,
       "share": 0,
-      "username": "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL",
+      "username": "YOUR_WALLET",
       "password": "proxy",
       "keepAlive": true,
+      "coin": "xmr",
       "algo": "rx/0",
       "algo_perf": { "rx/0": 1, "rx/loki": 1 },
       "blob_type": "cryptonote",
@@ -47,34 +50,37 @@
     {
       "port": 8080,
       "ssl": false,
-      "diff": 10000
+      "diff": 10000,
+      "coin": "xmr"
     },
     {
       "port": 8443,
       "ssl": true,
-      "diff": 10000
+      "diff": 10000,
+      "coin": "xmr"
     },
     {
       "port": 3333,
       "ssl": false,
-      "diff": 1000
+      "diff": 1000,
+      "coin": "xmr"
     },
     {
       "port": 1111,
       "ssl": false,
-      "diff": 1
+      "diff": 1,
+      "coin": "xmr"
     }
   ],
   "bindAddress": "0.0.0.0",
   "developerShare": 1,
-  "daemonAddress": "127.0.0.1:18081",
   "accessControl": {
     "enabled": false,
     "controlFile": "accessControl.json"
   },
   "httpEnable": false,
   "httpAddress": "127.0.0.1",
-  "httpPort": "8081",
+  "httpPort": 8081,
   "httpUser": "",
   "httpPass": "",
   "addressWorkerID": false,
@@ -83,7 +89,7 @@
   "refreshTime": 30,
   "theme": "light",
   "coinSettings": {
-    "xmr":{
+    "xmr": {
       "minDiff": 1,
       "maxDiff": 10000000,
       "shareTargetTime": 30

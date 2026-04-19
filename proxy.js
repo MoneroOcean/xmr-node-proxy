@@ -19,17 +19,17 @@ class StandaloneProxyApp {
     constructor(options) {
         this.config = options.config;
         this.coinFactories = options.coinFactories || {};
-        this.logger = options.logger || createLogger();
+        this.logger = options.logger || createLogger({ component: "xnp" });
         this.instanceId = options.instanceId || crypto.randomBytes(3);
         this.master = new MasterController({
             config: this.config,
-            logger: this.logger.child("[MASTER] "),
+            logger: this.logger.child("master"),
             coinFactories: this.coinFactories,
             instanceId: this.instanceId
         });
         this.worker = new WorkerController({
             config: this.config,
-            logger: this.logger.child("[WORKER] "),
+            logger: this.logger.child("worker"),
             coinFactories: this.coinFactories,
             instanceId: this.instanceId,
             sendToMaster: (message) => this.master.handleWorkerMessage("standalone", message)
@@ -38,7 +38,7 @@ class StandaloneProxyApp {
     }
 
     start() {
-        this.logger.info(`Xmr-Node-Proxy (XNP) v${PROXY_VERSION} starting in standalone mode`);
+        this.logger.info("proxy.start", { mode: "standalone", version: PROXY_VERSION });
         this.master.start();
         this.worker.start();
     }
@@ -77,7 +77,7 @@ function createStandaloneApp(rawConfig, options = {}) {
 
 function createMasterRuntime(options) {
     const { config, coinFactories, instanceId } = options;
-    const logger = createLogger({ prefix: "[MASTER] " });
+    const logger = createLogger({ component: "master" });
     const master = new MasterController({
         config,
         logger,
@@ -105,14 +105,18 @@ function createMasterRuntime(options) {
     master.start();
 
     const workerCount = options.workerCount || os.cpus().length;
-    logger.info(`Cluster master starting ${workerCount} workers`);
+    logger.info("cluster.start", { workers: workerCount });
     for (let index = 0; index < workerCount; index += 1) {
         spawnWorker();
     }
 
     cluster.on("exit", (worker, code, signal) => {
         master.detachWorker(String(worker.id));
-        logger.error(`Worker ${worker.process.pid} exited code=${code} signal=${signal}`);
+        logger.error("cluster.worker_exit", {
+            pid: worker.process.pid,
+            code,
+            signal
+        });
         if (!shuttingDown) spawnWorker();
     });
 
@@ -130,7 +134,7 @@ function createMasterRuntime(options) {
 
 function createWorkerRuntime(options) {
     const { config, coinFactories, instanceId } = options;
-    const logger = createLogger({ prefix: `[W${cluster.worker?.id || 0}] ` });
+    const logger = createLogger({ component: `worker.${cluster.worker?.id || 0}` });
     const worker = new WorkerController({
         config,
         logger,

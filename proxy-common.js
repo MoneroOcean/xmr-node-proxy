@@ -72,13 +72,70 @@ function compileDebugPatterns(rawValue = "") {
         .map((pattern) => new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*")}$`));
 }
 
-function createLogger({ prefix = "", debug = process.env.DEBUG || "" } = {}) {
-    const patterns = compileDebugPatterns(debug);
-    const prefixValue = prefix ? `${prefix}` : "";
+function normalizeLoggerComponent(value) {
+    return String(value ?? "")
+        .trim()
+        .replace(/^\[([^\]]+)\]\s*$/, "$1")
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9._:-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .toLowerCase();
+}
 
-    function format(message, meta) {
-        if (meta === undefined) return message;
-        return `${message} ${JSON.stringify(meta)}`;
+function formatTimestamp(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    const second = String(date.getSeconds()).padStart(2, "0");
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function formatLogValue(value) {
+    if (value === undefined) return "";
+    if (value === null) return "null";
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+        return String(value);
+    }
+    if (typeof value === "string") {
+        return /^[a-zA-Z0-9._:/,@%+\-=]+$/.test(value) ? value : JSON.stringify(value);
+    }
+    return JSON.stringify(value);
+}
+
+function formatLogMeta(meta) {
+    if (meta === undefined || meta === null) return "";
+    if (typeof meta !== "object" || Array.isArray(meta)) {
+        return formatLogValue(meta);
+    }
+
+    return Object.entries(meta)
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => `${key}=${formatLogValue(value)}`)
+        .join(" ");
+}
+
+function createLogger({ prefix = "", component = "", debug = process.env.DEBUG || "" } = {}) {
+    const patterns = compileDebugPatterns(debug);
+    const componentValue = component || normalizeLoggerComponent(prefix);
+    const levelLabels = {
+        info: "INF",
+        warn: "WRN",
+        error: "ERR",
+        debug: "DBG"
+    };
+
+    function write(level, sink, message, meta, namespace = "") {
+        const parts = [
+            formatTimestamp(),
+            levelLabels[level],
+            componentValue || "-",
+            namespace ? `${namespace} ${message}` : message
+        ];
+        const metaText = formatLogMeta(meta);
+        if (metaText) parts.push(metaText);
+        sink(parts.join(" "));
     }
 
     function isDebugEnabled(namespace) {
@@ -88,20 +145,20 @@ function createLogger({ prefix = "", debug = process.env.DEBUG || "" } = {}) {
 
     return {
         info(message, meta) {
-            console.log(`${prefixValue}${format(message, meta)}`);
+            write("info", console.log, message, meta);
         },
         warn(message, meta) {
-            console.warn(`${prefixValue}${format(message, meta)}`);
+            write("warn", console.warn, message, meta);
         },
         error(message, meta) {
-            console.error(`${prefixValue}${format(message, meta)}`);
+            write("error", console.error, message, meta);
         },
         debug(namespace, message, meta) {
             if (!isDebugEnabled(namespace)) return;
-            console.log(`${prefixValue}[${namespace}] ${format(message, meta)}`);
+            write("debug", console.log, message, meta, namespace);
         },
-        child(childPrefix) {
-            return createLogger({ prefix: `${prefixValue}${childPrefix}`, debug });
+        child(childComponent) {
+            return createLogger({ component: normalizeLoggerComponent(childComponent) || componentValue, debug });
         }
     };
 }

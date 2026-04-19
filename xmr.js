@@ -129,7 +129,7 @@ function createXmrCoin(options = {}) {
         }
         const algos = Object.keys(defaultAlgoSet);
         if (algos.length === 1) return algos[0];
-        if (logger) logger.error(`Cannot unambiguously detect block template algorithm from: ${algos.join(", ")}`);
+        if (logger) logger.error("algo.detect_ambiguous", { algos: algos.join(",") });
         return algos[0] || DEFAULT_ALGO[0];
     }
 
@@ -221,6 +221,9 @@ function createXmrCoin(options = {}) {
     }
 
     function normalizeDifficulty(value, fallback = 1) {
+        // Some upstreams expose difficulty-like fields as floats or numeric strings
+        // such as target_diff. Normalize once here so the rest of the adapter can
+        // safely use integer math and BigInt conversions.
         const numericValue = Number(value);
         if (Number.isFinite(numericValue) && numericValue > 0) {
             return Math.max(1, Math.floor(numericValue));
@@ -266,9 +269,9 @@ function createXmrCoin(options = {}) {
         const now = Date.now();
         if (!state.startedAt || (now - state.startedAt) > 30_000 || state.lastDiff !== targetDiff) {
             if (state.count > 0 && typeof log === "function") {
-                log(`Submitted ${state.count} share(s) of ${state.lastDiff} hashes to ${poolName} pool`);
+                log("share.upstream", { pool: poolName, diff: state.lastDiff, count: state.count });
             } else if (typeof log === "function") {
-                log(`Submitted share of ${targetDiff} hashes to ${poolName} pool`);
+                log("share.upstream", { pool: poolName, diff: targetDiff, count: 1 });
             }
             state.startedAt = now;
             state.count = 1;
@@ -279,6 +282,8 @@ function createXmrCoin(options = {}) {
         poolShareStats.set(poolName, state);
     }
 
+    // Worker templates are miner-facing snapshots. They track the worker nonce lane
+    // and cache enough data to rebuild a submitted share locally.
     class WorkerBlockTemplate {
         constructor(template) {
             this.id = template.id;
@@ -316,6 +321,9 @@ function createXmrCoin(options = {}) {
         }
     }
 
+    // Master templates are upstream-facing snapshots. They own the pool nonce lane
+    // so each worker gets a distinct upstream job while still mapping shares back to
+    // the original pool job id.
     class MasterBlockTemplate {
         constructor(template) {
             this.blob = template.blocktemplate_blob;
@@ -452,6 +460,8 @@ function createXmrCoin(options = {}) {
             poolNonce: activeBlockTemplate.poolNonce
         };
 
+        // Keep a short worker-local mapping from proxy job id back to the upstream
+        // job id and pool nonce so submit handling can reconstruct the exact pool share.
         if (!poolState.workerJobs) {
             poolState.workerJobs = new Map();
         }
@@ -508,11 +518,11 @@ function createXmrCoin(options = {}) {
                         verifyFailed = true;
                     }
                 } else if (typeof warn === "function") {
-                    warn(`Share verification throttled for ${miner.logString}`);
+                    warn("share.verify_throttled", { miner: miner.logString });
                 }
 
                 if (verifyFailed) {
-                    if (typeof warn === "function") warn(`Bad share from miner ${miner.logString}`);
+                    if (typeof warn === "function") warn("share.invalid_hash", { miner: miner.logString });
                     return false;
                 }
 
@@ -529,7 +539,10 @@ function createXmrCoin(options = {}) {
                 recordPoolShare(miner.pool, Number(poolTargetDiff), info);
             } else if (hashDiff < minerTargetDiff) {
                 if (typeof warn === "function") {
-                    warn(`Rejected low diff share of ${hashDiff.toString()} from ${miner.logString}`);
+                    warn("share.low_diff", {
+                        miner: miner.logString,
+                        diff: hashDiff.toString()
+                    });
                 }
                 return false;
             }
@@ -539,7 +552,10 @@ function createXmrCoin(options = {}) {
             return true;
         } catch (error) {
             if (typeof warn === "function") {
-                warn(`Share processing failed for ${miner.logString}: ${error.message}`);
+                warn("share.process_failed", {
+                    miner: miner.logString,
+                    error: error.message
+                });
             }
             return false;
         }

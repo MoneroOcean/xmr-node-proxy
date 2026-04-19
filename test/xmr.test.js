@@ -62,5 +62,5 @@ test("processShare handles floating pool target difficulty without throwing", ()
     });
 
     assert.equal(accepted, false);
-    assert.equal(warnings.some((message) => /Rejected low diff share/.test(message)), true);
+    assert.equal(warnings.some((message) => message === "share.low_diff"), true);
 });

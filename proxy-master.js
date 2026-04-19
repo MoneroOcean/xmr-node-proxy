@@ -26,6 +26,8 @@ class MasterController {
         this.hashrateAlgo = "h/s";
         this.enumerateTimer = null;
         this.balanceTimer = null;
+        this.lastSummaryLogAt = 0;
+        this.lastSummaryKey = "";
         this.monitor = new ProxyMonitor({
             config: this.config,
             logger: this.logger,
@@ -100,6 +102,8 @@ class MasterController {
     ensurePool(poolConfig) {
         if (this.pools.has(poolConfig.hostname)) return this.pools.get(poolConfig.hostname);
         const factory = loadCoinFactory(poolConfig.coin, this.coinFactories);
+        // The master owns upstream pool IO and template fanout, but it uses the same
+        // adapter surface as workers so pool-side and miner-side template handling stay in sync.
         const coinAdapter = factory({ instanceId: this.instanceId, logger: this.logger });
         const pool = new UpstreamPoolClient({
             config: this.config,
@@ -130,7 +134,9 @@ class MasterController {
 
     handlePoolTemplate(pool, blockTemplate) {
         if (!blockTemplate) {
-            this.logger.error(`Pool ${pool.hostname} returned an empty block template`);
+            this.logger.error("pool.job_empty", {
+                host: pool.hostname
+            });
             pool.markUnavailable("empty-template");
             pool.destroySocket();
             pool.scheduleConnect();
@@ -159,9 +165,13 @@ class MasterController {
             }
             pool.activeBlockTemplate = new pool.coinAdapter.MasterBlockTemplate(templateCopy);
             pool.enabled = true;
-            this.logger.info(
-                `Received template from ${pool.hostname} height=${pool.activeBlockTemplate.height} target=${pool.activeBlockTemplate.targetDiff}`
-            );
+            this.logger.info("pool.job", {
+                host: pool.hostname,
+                height: pool.activeBlockTemplate.height,
+                algo: pool.activeBlockTemplate.algo,
+                target: pool.activeBlockTemplate.targetDiff,
+                variant: pool.activeBlockTemplate.variant
+            });
             this.broadcast({ type: "enablePool", pool: pool.hostname });
             for (const [workerId, workerState] of this.workers) {
                 if (!this.isPoolUsable(pool.hostname)) continue;
@@ -172,7 +182,10 @@ class MasterController {
                 });
             }
         } catch (error) {
-            this.logger.error(`Failed to accept template from ${pool.hostname}: ${error.message}`);
+            this.logger.error("pool.job_rejected", {
+                host: pool.hostname,
+                error: error.message
+            });
             pool.markUnavailable("invalid-template");
             pool.destroySocket();
             pool.scheduleConnect();
@@ -298,10 +311,30 @@ class MasterController {
         }
 
         const averageDiff = globalStats.miners > 0 ? Math.floor(globalStats.diff / globalStats.miners) : 0;
-        this.logger.info(
-            `The proxy currently has ${globalStats.miners} miners connected at ${humanHashrate(globalStats.hashRate, this.hashrateAlgo)}`
-            + (globalStats.miners ? ` with an average diff of ${averageDiff}` : "")
-        );
+        const activePools = Array.from(this.pools.keys()).filter((hostname) => this.isPoolUsable(hostname)).length;
+        const hashrateBucket = globalStats.hashRate >= 1000
+            ? Math.round(globalStats.hashRate / 100) * 100
+            : Math.round(globalStats.hashRate / 10) * 10;
+        const summaryKey = JSON.stringify({
+            miners: globalStats.miners,
+            hashrateBucket,
+            averageDiff,
+            activePools,
+            algo: this.hashrateAlgo
+        });
+        const now = Date.now();
+        // Keep a heartbeat in logs without reprinting the same fleet summary every 15s.
+        if (summaryKey !== this.lastSummaryKey || (now - this.lastSummaryLogAt) >= 60_000) {
+            this.logger.info("proxy.summary", {
+                miners: globalStats.miners,
+                hashrate: humanHashrate(globalStats.hashRate, this.hashrateAlgo),
+                avgDiff: globalStats.miners > 0 ? averageDiff : undefined,
+                activePools,
+                algo: this.hashrateAlgo !== "h/s" ? this.hashrateAlgo : undefined
+            });
+            this.lastSummaryKey = summaryKey;
+            this.lastSummaryLogAt = now;
+        }
     }
 
     balanceWorkers() {
@@ -345,7 +378,7 @@ class MasterController {
                         state[poolName].percentage += addModifier;
                     }
                 } else {
-                    this.logger.warn(`No active pools for ${coin}, skipping balance cycle`);
+                    this.logger.warn("pool.balance_skipped", { coin, reason: "no-active-pools" });
                     continue;
                 }
             }

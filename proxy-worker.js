@@ -89,6 +89,9 @@ class WorkerController {
     ensurePool(poolConfig) {
         if (this.pools.has(poolConfig.hostname)) return this.pools.get(poolConfig.hostname);
         const factory = loadCoinFactory(poolConfig.coin, this.coinFactories);
+        // Workers do miner-facing validation locally, so they must build the same
+        // coin adapter contract as the master. Keep adapter factories deterministic
+        // and free of hidden global state when adding new coin modules.
         const coinAdapter = factory({ instanceId: this.instanceId, logger: this.logger });
         const poolState = {
             ...poolConfig,
@@ -106,7 +109,7 @@ class WorkerController {
         try {
             return this.accessControl.isAllowed(username, password);
         } catch (error) {
-            this.logger.error(`Failed to load access control list: ${error.message}`);
+            this.logger.error("access.reload_failed", { error: error.message });
             return false;
         }
     }
@@ -193,11 +196,21 @@ class WorkerController {
                 : net.createServer(handler);
 
             server.on("error", (error) => {
-                this.logger.error(`Cannot bind server on port ${portData.port}: ${error.message}`);
+                this.logger.error("listen.bind_failed", {
+                    port: portData.port,
+                    tls: portData.ssl,
+                    error: error.message
+                });
             });
             server.listen(portData.port, this.config.bindAddress, () => {
                 const address = server.address();
-                this.logger.info(`Started ${portData.ssl ? "TLS" : "TCP"} server on ${address.address}:${address.port}`);
+                this.logger.info("listen.ready", {
+                    host: address.address,
+                    port: address.port,
+                    tls: portData.ssl,
+                    coin: portData.coin,
+                    diff: portData.diff
+                });
             });
             this.servers.push({ server, portData });
         }

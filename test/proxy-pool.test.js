@@ -192,7 +192,7 @@ test("UpstreamPoolClient retries quickly when MO says the template is not ready 
         assert.equal(templates[0].job_id, "job-ready");
         assert.equal(client.sendLog.size, 0);
         assert.equal(client.connected, true);
-        assert.match(logger.entries.warn[0].message, /has no template/i);
+        assert.equal(logger.entries.warn[0].message, "pool.no_template_yet");
     } finally {
         client.stop();
         await new Promise((resolve) => server.close(resolve));

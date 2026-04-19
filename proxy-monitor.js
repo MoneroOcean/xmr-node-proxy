@@ -46,7 +46,10 @@ class ProxyMonitor {
 
         this.server.listen(this.config.httpPort, this.config.httpAddress, () => {
             const address = this.server.address();
-            this.logger.info(`HTTP monitor listening on ${address.address}:${address.port}`);
+            this.logger.info("monitor.ready", {
+                host: address.address,
+                port: address.port
+            });
         });
     }
 
