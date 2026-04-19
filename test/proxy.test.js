@@ -290,9 +290,14 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
             assert.equal(denied.statusCode, 401);
 
             const authHeader = `Basic ${Buffer.from("admin:secret").toString("base64")}`;
-            const jsonResponse = await harness.httpRequest({
+            const rawJsonResponse = await harness.httpRequest({
                 port: harness.monitorPort,
                 pathName: "/json",
+                headers: { Authorization: authHeader }
+            });
+            const snapshotResponse = await harness.httpRequest({
+                port: harness.monitorPort,
+                pathName: "/snapshot",
                 headers: { Authorization: authHeader }
             });
             const htmlResponse = await harness.httpRequest({
@@ -301,13 +306,19 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 headers: { Authorization: authHeader }
             });
 
-            assert.equal(jsonResponse.statusCode, 200);
+            assert.equal(rawJsonResponse.statusCode, 200);
+            assert.equal(snapshotResponse.statusCode, 200);
             assert.equal(htmlResponse.statusCode, 200);
 
-            const snapshot = JSON.parse(jsonResponse.body);
+            const rawState = JSON.parse(rawJsonResponse.body);
+            const snapshot = JSON.parse(snapshotResponse.body);
+            assert.ok(rawState.standalone);
+            assert.equal(rawState.standalone[loginReply.result.id].id, loginReply.result.id);
             assert.equal(snapshot.totalMiners, 1);
             assert.equal(snapshot.miners[0].id, loginReply.result.id);
             assert.match(htmlResponse.body, /worker-monitor/);
+            assert.match(htmlResponse.body, /theme-toggle/);
+            assert.match(htmlResponse.body, /data-sort-type="number"/);
         } finally {
             await client.close();
             await harness.stop();

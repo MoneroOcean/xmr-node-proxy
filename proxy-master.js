@@ -303,6 +303,20 @@ class MasterController {
         });
     }
 
+    getMonitorRawState() {
+        const state = {};
+
+        for (const [workerId, workerState] of this.workers) {
+            state[workerId] = {};
+            for (const [minerId, miner] of workerState.stats) {
+                if (!miner) continue;
+                state[workerId][minerId] = miner;
+            }
+        }
+
+        return state;
+    }
+
     getActiveMinerViews() {
         const views = [];
 

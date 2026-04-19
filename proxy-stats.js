@@ -157,6 +157,7 @@ function buildMonitorSnapshot({ workers, pools, developerShare, hashrateAlgo, is
         .filter((pool) => !pool.devPool || developerShare > 0)
         .map((pool) => ({
             hostname: pool.hostname,
+            username: pool.username || null,
             coin: pool.coin,
             devPool: pool.devPool,
             percentage: Number(pool.share || 0).toFixed(2),
