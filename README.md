@@ -13,6 +13,17 @@ Supports all known cryptonight/heavy/light/pico coins:
 
 Ubuntu 26.04 is the default deployment target. Ubuntu 24.04 still works using the default Ubuntu Node.js packages.
 
+## Development Notes
+
+The proxy now has a standalone runtime for local verification and an automated integration test suite that runs without a real pool.
+
+```bash
+npm test
+node proxy.js --standalone
+```
+
+`--standalone` is intended for local development and tests. Normal production usage is still `node proxy.js` or `pm2 start proxy.js`.
+
 ## Switching from other xmr-node-proxy repository
 
 ```bash
