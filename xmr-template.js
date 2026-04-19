@@ -146,7 +146,6 @@ function createXmrTemplateTools(options = {}) {
 
         const blob = activeBlockTemplate.nextBlob();
         adjustMinerDiff(miner, activeBlockTemplate.targetDiff);
-        miner.lastBlockHeight = activeBlockTemplate.height;
 
         const newJob = {
             id: randomId(),

@@ -82,10 +82,6 @@ class StandaloneProxyApp {
         return this.worker.getBoundPorts();
     }
 
-    getMonitorSnapshot() {
-        return this.master.getMonitorSnapshot();
-    }
-
     getState() {
         return {
             master: this.master,

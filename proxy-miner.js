@@ -24,7 +24,6 @@ class MinerSession {
         this.coinSettings = options.coinSettings;
         this.connectTime = Date.now();
         this.lastShareTime = Date.now() / 1000;
-        this.lastBlockHeight = 0;
         this.shares = 0;
         this.blocks = 0;
         this.hashes = 0;
@@ -246,6 +245,18 @@ class MinerProtocol {
         writeJsonLine(socket, payload, final);
     }
 
+    getParams(params, reject) {
+        if (params && typeof params === "object") return params;
+        reject("No params specified");
+        return null;
+    }
+
+    getMiner(minerId, reject) {
+        const miner = this.runtime.activeMiners.get(minerId || "");
+        if (!miner) reject("Unauthenticated");
+        return miner;
+    }
+
     handleMessage(socket, request, portData, pushMessage) {
         if (!request || typeof request !== "object") return;
         if (!("id" in request)) {
@@ -287,12 +298,8 @@ class MinerProtocol {
     }
 
     handleLogin(socket, request, portData, pushMessage, reply, replyFinal) {
-        if (!request.params || typeof request.params !== "object") {
-            replyFinal("No params specified");
-            return;
-        }
-
-        const params = request.params;
+        const params = this.getParams(request.params, replyFinal);
+        if (!params) return;
         const defaultPool = this.runtime.defaultPools.get(portData.coin) || Array.from(this.runtime.pools.keys())[0];
         const coinAdapter = this.runtime.pools.get(defaultPool)?.coinAdapter;
         const coinSettings = this.runtime.config.coinSettings[portData.coin];
@@ -329,55 +336,38 @@ class MinerProtocol {
             }
         }
 
-        if (request.id === "Stratum") {
-            miner.protocol = "grin";
-            this.runtime.reportMinerStat(miner.id, miner);
-            reply(null, "ok");
-            return;
-        }
-
-        miner.protocol = "default";
+        miner.protocol = request.id === "Stratum" ? "grin" : "default";
         this.runtime.reportMinerStat(miner.id, miner);
-        reply(null, { id: miner.id, job: miner.getNewJob(), status: "OK" });
+        reply(null, miner.protocol === "grin" ? "ok" : {
+            id: miner.id,
+            job: miner.getNewJob(),
+            status: "OK"
+        });
     }
 
     handleGetJobTemplate(socket, reply) {
-        const miner = this.runtime.activeMiners.get(socket.minerId || "");
-        if (!miner) {
-            reply("Unauthenticated");
-            return;
-        }
+        const miner = this.getMiner(socket.minerId, reply);
+        if (!miner) return;
         miner.protocol = "grin";
         miner.heartbeat();
         reply(null, miner.getNewJob());
     }
 
     handleGetJob(params, reply, replyFinal) {
-        if (!params || typeof params !== "object") {
-            replyFinal("No params specified");
-            return;
-        }
-        const miner = this.runtime.activeMiners.get(params.id || "");
-        if (!miner) {
-            reply("Unauthenticated");
-            return;
-        }
+        const requestParams = this.getParams(params, replyFinal);
+        if (!requestParams) return;
+        const miner = this.getMiner(requestParams.id, reply);
+        if (!miner) return;
         miner.heartbeat();
         reply(null, miner.getNewJob());
     }
 
     handleSubmit(socket, params, reply, replyFinal) {
-        if (!params || typeof params !== "object") {
-            replyFinal("No params specified");
-            return;
-        }
+        params = this.getParams(params, replyFinal);
+        if (!params) return;
 
-        const minerId = params.id || socket.minerId || "";
-        const miner = this.runtime.activeMiners.get(minerId);
-        if (!miner) {
-            reply("Unauthenticated");
-            return;
-        }
+        const miner = this.getMiner(params.id || socket.minerId, reply);
+        if (!miner) return;
         miner.heartbeat();
 
         if (typeof params.job_id === "number") {
@@ -467,15 +457,10 @@ class MinerProtocol {
     }
 
     handleKeepalive(socket, params, reply, replyFinal) {
-        if (!params || typeof params !== "object") {
-            replyFinal("No params specified");
-            return;
-        }
-        const miner = this.runtime.activeMiners.get(socket.minerId || params.id || "");
-        if (!miner) {
-            replyFinal("Unauthenticated");
-            return;
-        }
+        params = this.getParams(params, replyFinal);
+        if (!params) return;
+        const miner = this.getMiner(socket.minerId || params.id, replyFinal);
+        if (!miner) return;
         miner.heartbeat();
         this.runtime.reportMinerStat(miner.id, miner);
         reply(null, { status: "KEEPALIVED" });

@@ -24,29 +24,25 @@ class ProxyMonitor {
 
         this.server = http.createServer((request, response) => {
             if (!this.authorizeRequest(request, response)) return;
-            const pathname = new URL(request.url, "http://localhost").pathname;
-
-            if (pathname === "/") {
+            switch (new URL(request.url, "http://localhost").pathname) {
+            case "/": {
                 const snapshot = this.runtime.getMonitorSnapshot();
                 response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
                 response.end(this.renderHtml(snapshot));
                 return;
             }
-
-            if (pathname === "/json") {
+            case "/json":
                 response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
                 response.end(`${JSON.stringify(this.runtime.getMonitorRawState())}\r\n`);
                 return;
-            }
-
-            if (pathname === "/snapshot") {
+            case "/snapshot":
                 response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
                 response.end(JSON.stringify(this.runtime.getMonitorSnapshot(), null, 2));
                 return;
+            default:
+                response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+                response.end("Not found");
             }
-
-            response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-            response.end("Not found");
         });
 
         this.server.listen(this.config.httpPort, this.config.httpAddress, () => {
@@ -95,95 +91,77 @@ class ProxyMonitor {
         return true;
     }
 
-    getMoneroOceanDashboardUrl(pool) {
-        if (!pool || !pool.username || !/moneroocean/i.test(pool.hostname || "")) return null;
-        return `https://moneroocean.stream/#/dashboard?addr=${encodeURIComponent(pool.username)}`;
-    }
-
     renderPoolCards(snapshot) {
-        const cards = [];
-        for (const pool of snapshot.pools) {
+        return snapshot.pools.map((pool) => {
             const algoLabel = pool.algo ? `, algo ${escapeHtml(pool.algo)}` : "";
             const variantLabel = pool.variant ? `, variant ${escapeHtml(pool.variant)}` : "";
-            const dashboardUrl = this.getMoneroOceanDashboardUrl(pool);
+            const dashboardUrl = pool.username && /moneroocean/i.test(pool.hostname || "")
+                ? `https://moneroocean.stream/#/dashboard?addr=${encodeURIComponent(pool.username)}`
+                : null;
             const titleMarkup = dashboardUrl
-                ? `<a class="pool-card__link" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noreferrer" title="Open MoneroOcean dashboard">${escapeHtml(pool.hostname)}</a>`
+                ? [
+                    `<a class="pool-card__link" href="${escapeHtml(dashboardUrl)}"`,
+                    "target=\"_blank\" rel=\"noreferrer\"",
+                    `title="Open MoneroOcean dashboard">${escapeHtml(pool.hostname)}</a>`
+                ].join(" ")
                 : escapeHtml(pool.hostname);
-            cards.push(`
+            return `
                 <section class="pool-card ${pool.active ? "pool-card--active" : "pool-card--inactive"}">
                     <h3>${titleMarkup}</h3>
                     <p>${escapeHtml(pool.coin.toUpperCase())} pool${pool.devPool ? " (dev)" : ""}</p>
-                    <p>${humanHashrate(pool.hashrate, snapshot.hashrateAlgo)} routed, ${escapeHtml(pool.percentage)}%</p>
-                    <p>height ${escapeHtml(String(pool.height ?? "?"))}, target ${escapeHtml(String(pool.targetDiff ?? "?"))}${algoLabel}${variantLabel}</p>
+                    <p>
+                        ${humanHashrate(pool.hashrate, snapshot.hashrateAlgo)} routed,
+                        ${escapeHtml(pool.percentage)}%
+                    </p>
+                    <p>
+                        height ${escapeHtml(String(pool.height ?? "?"))},
+                        target ${escapeHtml(String(pool.targetDiff ?? "?"))}${algoLabel}${variantLabel}
+                    </p>
                 </section>
-            `);
-        }
-        return cards.join("\n");
+            `;
+        }).join("\n");
     }
 
-    renderTableCell(content, { sortValue = "", title = "", className = "" } = {}) {
-        const classAttr = className ? ` class="${className}"` : "";
+    renderTableCell(content, { sortValue = "", title = "" } = {}) {
         const sortAttr = ` data-sort-value="${escapeHtml(String(sortValue ?? ""))}"`;
         const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
-        return `<td${classAttr}${sortAttr}${titleAttr}>${content}</td>`;
-    }
-
-    renderAgentCell(agent) {
-        if (!agent) return "";
-        const display = String(agent).split(/\s+/, 1)[0] || String(agent);
-        return `
-            <div class="tooltip" title="${escapeHtml(agent)}">
-                <span class="tooltip__label">${escapeHtml(display)}</span>
-                <span class="tooltiptext">${escapeHtml(agent)}</span>
-            </div>
-        `;
+        return `<td${sortAttr}${titleAttr}>${content}</td>`;
     }
 
     renderMinerRows(snapshot) {
-        return snapshot.miners.map((miner) => `
-            <tr>
-                ${this.renderTableCell(escapeHtml(miner.logString), {
-        sortValue: miner.logString,
-        title: miner.logString
-    })}
-                ${this.renderTableCell(escapeHtml(miner.active ? humanHashrate(miner.avgSpeed, miner.algo) : "offline"), {
-        sortValue: miner.active ? miner.avgSpeed : -1,
-        title: miner.active ? humanHashrate(miner.avgSpeed, miner.algo) : "offline"
-    })}
-                ${this.renderTableCell(escapeHtml(String(miner.diff)), {
-        sortValue: miner.diff,
-        title: String(miner.diff)
-    })}
-                ${this.renderTableCell(escapeHtml(String(miner.shares)), {
-        sortValue: miner.shares,
-        title: String(miner.shares)
-    })}
-                ${this.renderTableCell(escapeHtml(String(miner.hashes)), {
-        sortValue: miner.hashes,
-        title: String(miner.hashes)
-    })}
-                ${this.renderTableCell(escapeHtml(formatRelativeSeconds(miner.lastShare)), {
-        sortValue: miner.lastShare,
-        title: formatRelativeSeconds(miner.lastShare)
-    })}
-                ${this.renderTableCell(escapeHtml(formatRelativeSeconds(miner.lastContact)), {
-        sortValue: miner.lastContact,
-        title: formatRelativeSeconds(miner.lastContact)
-    })}
-                ${this.renderTableCell(escapeHtml(formatDurationMs(Date.now() - miner.connectTime)), {
-        sortValue: miner.connectTime,
-        title: formatDurationMs(Date.now() - miner.connectTime)
-    })}
-                ${this.renderTableCell(escapeHtml(miner.pool), {
-        sortValue: miner.pool,
-        title: miner.pool
-    })}
-                ${this.renderTableCell(this.renderAgentCell(miner.agent || ""), {
-        sortValue: miner.agent || "",
-        title: miner.agent || ""
-    })}
-            </tr>
-        `).join("\n");
+        const now = Date.now();
+        return snapshot.miners.map((miner) => {
+            const hashrate = miner.active ? humanHashrate(miner.avgSpeed, miner.algo) : "offline";
+            const lastShare = formatRelativeSeconds(miner.lastShare);
+            const lastContact = formatRelativeSeconds(miner.lastContact);
+            const connected = formatDurationMs(now - miner.connectTime);
+            const agent = miner.agent || "";
+            const agentLabel = String(agent).split(/\s+/, 1)[0] || String(agent);
+            const agentMarkup = agent
+                ? [
+                    `<div class="tooltip" title="${escapeHtml(agent)}">`,
+                    `<span class="tooltip__label">${escapeHtml(agentLabel)}</span>`,
+                    `<span class="tooltiptext">${escapeHtml(agent)}</span>`,
+                    "</div>"
+                ].join("")
+                : "";
+            const cells = [
+                [escapeHtml(miner.logString), miner.logString, miner.logString],
+                [escapeHtml(hashrate), miner.active ? miner.avgSpeed : -1, hashrate],
+                [escapeHtml(String(miner.diff)), miner.diff, String(miner.diff)],
+                [escapeHtml(String(miner.shares)), miner.shares, String(miner.shares)],
+                [escapeHtml(String(miner.hashes)), miner.hashes, String(miner.hashes)],
+                [escapeHtml(lastShare), miner.lastShare, lastShare],
+                [escapeHtml(lastContact), miner.lastContact, lastContact],
+                [escapeHtml(connected), miner.connectTime, connected],
+                [escapeHtml(miner.pool), miner.pool, miner.pool],
+                [agentMarkup, agent, agent]
+            ];
+            return `<tr>${cells.map(([content, sortValue, title]) => this.renderTableCell(content, {
+                sortValue,
+                title
+            })).join("")}</tr>`;
+        }).join("\n");
     }
 
     renderHtml(snapshot) {

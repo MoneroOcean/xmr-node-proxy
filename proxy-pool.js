@@ -26,7 +26,6 @@ class UpstreamPoolClient {
         this.username = this.poolConfig.username;
         this.password = this.poolConfig.password;
         this.keepAlive = this.poolConfig.keepAlive !== false;
-        this.default = this.poolConfig.default === true;
         this.devPool = this.poolConfig.devPool === true;
         this.coin = this.poolConfig.coin;
         this.blobType = this.poolConfig.blob_type;

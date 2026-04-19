@@ -1,6 +1,7 @@
 "use strict";
 
 const {
+    isPoolUsable: resolvePoolUsability,
     maybeUnref
 } = require("./proxy-common");
 const { loadCoinFactory } = require("./coin-loader");
@@ -21,7 +22,6 @@ class MasterController {
         this.instanceId = options.instanceId;
         this.workers = new Map();
         this.pools = new Map();
-        this.defaultPools = new Map();
         this.hashrateAlgo = "h/s";
         this.enumerateTimer = null;
         this.balanceTimer = null;
@@ -68,17 +68,10 @@ class MasterController {
         }
     }
 
-    getPool(hostname) {
-        return this.pools.get(hostname) || null;
-    }
-
     connectPools() {
         const seenCoins = new Set();
         for (const poolConfig of this.config.pools) {
             this.ensurePool(poolConfig);
-            if (poolConfig.default) {
-                this.defaultPools.set(poolConfig.coin, poolConfig.hostname);
-            }
             seenCoins.add(poolConfig.coin);
         }
 
@@ -116,19 +109,11 @@ class MasterController {
     }
 
     isPoolUsable(hostname) {
-        const pool = this.pools.get(hostname);
-        if (!pool || !pool.enabled || !pool.connected || !pool.activeBlockTemplate) return false;
-
-        let topHeight = 0;
-        for (const candidate of this.pools.values()) {
-            if (candidate.coin !== pool.coin) continue;
-            if (!candidate.enabled || !candidate.connected || !candidate.activeBlockTemplate) continue;
-            if (Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) > 1000) continue;
-            if (candidate.activeBlockTemplate.height > topHeight) {
-                topHeight = candidate.activeBlockTemplate.height;
-            }
-        }
-        return pool.activeBlockTemplate.height >= topHeight - 5;
+        return resolvePoolUsability(
+            this.pools,
+            hostname,
+            (pool) => pool.enabled && pool.connected && pool.activeBlockTemplate
+        );
     }
 
     handlePoolTemplate(pool, blockTemplate) {

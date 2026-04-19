@@ -7,6 +7,7 @@ const tls = require("node:tls");
 const {
     AccessControl,
     CircularBuffer,
+    isPoolUsable: resolvePoolUsability,
     maybeUnref,
 } = require("./proxy-common");
 const { loadCoinFactory } = require("./coin-loader");
@@ -110,17 +111,11 @@ class WorkerController {
     }
 
     isPoolUsable(hostname) {
-        const pool = this.pools.get(hostname);
-        if (!pool || !pool.active || !pool.activeBlockTemplate) return false;
-
-        let topHeight = 0;
-        for (const candidate of this.pools.values()) {
-            if (candidate.coin !== pool.coin) continue;
-            if (!candidate.active || !candidate.activeBlockTemplate) continue;
-            if (Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) > 1000) continue;
-            if (candidate.activeBlockTemplate.height > topHeight) topHeight = candidate.activeBlockTemplate.height;
-        }
-        return pool.activeBlockTemplate.height >= topHeight - 5;
+        return resolvePoolUsability(
+            this.pools,
+            hostname,
+            (pool) => pool.active && pool.activeBlockTemplate
+        );
     }
 
     chooseInitialPool(coin) {
@@ -224,9 +219,7 @@ class WorkerController {
     }
 
     publishStats() {
-        for (const [minerId, miner] of this.activeMiners) {
-            this.reportMinerStat(minerId, miner);
-        }
+        for (const [minerId, miner] of this.activeMiners) this.reportMinerStat(minerId, miner);
     }
 
     reportMinerStat(minerId, miner) {
@@ -248,21 +241,16 @@ class WorkerController {
         const reassignedMiners = [];
         for (const [hostname, pool] of this.pools) {
             if (pool.active) continue;
-            for (const [fallbackHost, fallbackPool] of this.pools) {
-                if (fallbackPool.devPool) continue;
-                    if (fallbackPool.coin !== pool.coin || !this.isPoolUsable(fallbackHost)) continue;
-                    for (const miner of this.activeMiners.values()) {
-                        if (miner.pool !== hostname) continue;
-                        miner.pool = fallbackHost;
-                        reassignedMiners.push(miner);
-                        this.reportMinerStat(miner.id, miner);
-                }
-                break;
+            const fallbackHost = this.chooseInitialPool(pool.coin);
+            if (!fallbackHost || fallbackHost === hostname) continue;
+            for (const miner of this.activeMiners.values()) {
+                if (miner.pool !== hostname) continue;
+                miner.pool = fallbackHost;
+                reassignedMiners.push(miner);
+                this.reportMinerStat(miner.id, miner);
             }
         }
-        for (const miner of reassignedMiners) {
-            miner.pushNewJob(true);
-        }
+        for (const miner of reassignedMiners) miner.pushNewJob(true);
     }
 }
 

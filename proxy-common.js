@@ -419,6 +419,19 @@ function humanHashrate(hashes, algo = "h/s") {
     return `${adjusted.toFixed(2)} ${unit}/s`;
 }
 
+function isPoolUsable(pools, hostname, isReady) {
+    const pool = pools.get(hostname);
+    if (!pool || !isReady(pool)) return false;
+
+    let topHeight = 0;
+    for (const candidate of pools.values()) {
+        if (candidate.coin !== pool.coin || !isReady(candidate)) continue;
+        if (Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) > 1000) continue;
+        topHeight = Math.max(topHeight, candidate.activeBlockTemplate.height);
+    }
+    return pool.activeBlockTemplate.height >= topHeight - 5;
+}
+
 function formatRelativeSeconds(timestampSeconds) {
     if (!timestampSeconds) return "never";
     const seconds = Math.max(0, Math.floor((Date.now() / 1000) - timestampSeconds));
@@ -528,6 +541,7 @@ module.exports = {
     formatDurationMs,
     formatRelativeSeconds,
     humanHashrate,
+    isPoolUsable,
     loadJsonFile,
     maybeUnref,
     normalizeConfig,
