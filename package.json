@@ -1,6 +1,6 @@
 {
   "name": "xmr-node-proxy",
-  "version": "0.28.2",
+  "version": "0.28.3",
   "description": "Node proxy for XMR pools based on nodejs-pool, should support any coins that nodejs-pool does with little work",
   "main": "proxy.js",
   "scripts": {
@@ -16,16 +16,19 @@
     "url": "https://github.com/MoneroOcean/xmr-node-proxy/issues"
   },
   "homepage": "https://github.com/MoneroOcean/xmr-node-proxy#readme",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "async": "2.1.4",
     "bignum": "^0.13.1",
     "circular-buffer": "1.0.2",
+    "cryptoforknote-util": "github:MoneroOcean/node-cryptoforknote-util#v15.8.12",
+    "cryptonight-hashing": "github:MoneroOcean/node-cryptonight-hashing#v29.1.6",
     "debug": "2.6.9",
     "express": "4.14.0",
     "minimist": "1.2.0",
     "moment": "2.21.0",
-    "request": "^2.79.0",
-    "cryptoforknote-util": "git+https://github.com/MoneroOcean/node-cryptoforknote-util.git#v15.8.4",
-    "cryptonight-hashing": "git+https://github.com/MoneroOcean/node-cryptonight-hashing.git#v29.0.6"
+    "request": "^2.79.0"
   }
 }

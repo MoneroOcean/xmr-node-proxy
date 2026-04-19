@@ -11,13 +11,13 @@ Supports all known cryptonight/heavy/light/pico coins:
 
 ## Setup Instructions
 
-Based on a clean Ubuntu 16.04 LTS minimal install
+Ubuntu 26.04 is the default deployment target. Ubuntu 24.04 still works using the default Ubuntu Node.js packages.
 
 ## Switching from other xmr-node-proxy repository
 
 ```bash
 cd xmr-node-proxy
-git remote set-url origin https://github.com/MoneroOcean/xmr-node-proxy.git && git pull -X theirs --no-edit && npm update
+git remote set-url origin https://github.com/MoneroOcean/xmr-node-proxy.git && git pull --ff-only && npm install
 ```
 
 ## Deployment via Installer on Linux
@@ -41,9 +41,8 @@ echo "nodeproxy ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 curl -L https://raw.githubusercontent.com/MoneroOcean/xmr-node-proxy/master/install.sh | bash
 ```
 
-3. Once it's complete, copy `config_example.json` to `config.json` and edit as desired.
-4. Run: `source ~/.bashrc`  This will activate NVM and get things working for the following pm2 steps.
-8. Once you're happy with the settings, go ahead and start all the proxy daemon, commands follow.
+4. Copy `config_example.json` to `config.json` and edit as desired.
+5. Once you're happy with the settings, go ahead and start the proxy daemon:
 
 ```shell
 cd ~/xmr-node-proxy/
@@ -76,7 +75,8 @@ cd xmr-node-proxy
 2. Get xmr-node-proxy sources by downloading and unpacking the latest [xmr-node-proxy](https://github.com/MoneroOcean/xmr-node-proxy/archive/master.zip)
 archive to xmr-node-proxy-master directory.
 
-3. Got to xmr-node-proxy-master directory in Windows "Command Prompt" and build xmr-node-proxy Docker image:
+3. Go to the xmr-node-proxy-master directory in Windows "Command Prompt" and build the xmr-node-proxy Docker image.
+   The image uses Ubuntu 26.04 with Ubuntu's default `nodejs` and `npm` packages.
 
 ```
 docker build . -t xmr-node-proxy
@@ -151,9 +151,7 @@ for all initial miner connections via proxy.
 VMs with 512Mb or less RAM will need some swap space in order to compile the C extensions for node.
 Bignum and the CN libraries can chew through some serious memory during compile.
 In regards to this here is guide for T2.Micro servers: [Setup of xmr-node-proxy on free tier AWS t2.micro instance](http://moneroocean.blogspot.com/2017/10/setup-of-xmr-node-proxy-on-free-tier.html).
-There is also more generic proxy instalation guide: [Complete guide to install and configure xmr-node-proxy on a Ubuntu 16.04 VPS](https://tjosm.com/7689/install-xmr-node-proxy-vps/)
-
-If not running on an Ubuntu 16.04 system, please make sure your kernel is at least 3.2 or higher, as older versions will not work for this.
+There is also more generic proxy instalation guide: [Complete guide to install and configure xmr-node-proxy on a Ubuntu VPS](https://tjosm.com/7689/install-xmr-node-proxy-vps/)
 
 Many smaller VMs come with ulimits set very low. We suggest looking into setting the ulimit higher. In particular, `nofile` (Number of files open) needs to be raised for high-usage instances.
 
