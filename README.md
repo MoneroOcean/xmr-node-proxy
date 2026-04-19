@@ -1,6 +1,17 @@
+<div align="center">
+
 # xmr-node-proxy
 
 Lean mining proxy for XMR-style pools.
+
+<p>
+  <img src="https://img.shields.io/badge/license-MIT-111111.svg" alt="MIT License">
+  <img src="https://img.shields.io/badge/node-18%20%7C%2020%20%7C%2022-111111.svg" alt="Node 18, 20, and 22">
+  <img src="https://img.shields.io/badge/runners-Ubuntu%2024.04%20%2B%20latest-111111.svg" alt="Ubuntu 24.04 and latest">
+  <a href="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml"><img src="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+</p>
+
+</div>
 
 It sits between miners and the upstream pool, keeps miner-facing difficulty local, fans out fresh jobs, balances miners across configured pools, and exposes a lightweight HTTP monitor.
 
@@ -28,6 +39,14 @@ Not a fit:
 - MoneroOcean `XTM-C` / `c29` pool protocol
 
 Those use different stratum families than this proxy's XMR-style path.
+
+## Trust Model
+
+This proxy is intended to sit in front of a controlled miner fleet, not to act as a zero-trust public pool edge.
+
+- Normal miner-difficulty shares intentionally trust the miner-reported `result` so the proxy can keep per-share CPU cost low.
+- The proxy still enforces job, template, and duplicate-share checks locally and can verify pool-target candidates, but it is not a hostile-miner firewall.
+- If you need full cryptographic verification of every submitted share from untrusted miners, enforce that in a different layer.
 
 ## Quick Start
 
@@ -253,6 +272,13 @@ Coverage includes:
 - access-control reloads
 - HTTP monitor auth
 - pool-side regression cases found during live MoneroOcean testing
+
+GitHub Actions currently runs:
+
+- Node `18`, `20`, and `22` on `ubuntu-24.04`
+- the runner-default Node on `ubuntu-24.04` and `ubuntu-latest`
+
+GitHub does not currently publish an `ubuntu-26.04` hosted Linux runner label, so that runner is not in the matrix yet.
 
 ## Adding a New Coin or Algo
 

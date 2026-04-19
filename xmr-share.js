@@ -77,6 +77,10 @@ function createXmrShareProcessor(options) {
                 template.writeUInt32BE(job.extraNonce, blockTemplate.workerOffset);
             }
 
+            // This proxy is designed for operator-controlled miner fleets. Normal
+            // miner-diff accounting intentionally trusts the miner-reported result
+            // so per-share CPU cost stays low; this layer is not a zero-trust public
+            // pool edge that fully recomputes every share hash before acceptance.
             const resultBuffer = blobTypeGrin(blobTypeNum)
                 ? multiHashing.c29_cycle_hash(params.pow)
                 : Buffer.from(params.result, "hex");
@@ -107,6 +111,8 @@ function createXmrShareProcessor(options) {
                         verifyFailed = true;
                     }
                 } else if (typeof warn === "function") {
+                    // Cap expensive local verification work so bursty block candidates
+                    // cannot turn the proxy into a hashing bottleneck.
                     warn("share.verify_throttled", { miner: miner.logString });
                 }
 

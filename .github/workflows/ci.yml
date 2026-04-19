@@ -4,9 +4,13 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  test-supported-node:
+    name: Test (Node ${{ matrix.node-version }} on Ubuntu 24.04)
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -21,7 +25,30 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+  test-default-runner-node:
+    name: Test (default Node on ${{ matrix.runs-on }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # GitHub does not currently publish an ubuntu-26.04 hosted Linux label.
+        runs-on: [ubuntu-24.04, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show default Node.js
+        run: |
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Run test suite
         run: npm test

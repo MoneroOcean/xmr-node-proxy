@@ -9,6 +9,7 @@ const DEFAULT_ALGO = ["rx/0"];
 const DEFAULT_ALGO_PERF = { "rx/0": 1, "rx/loki": 1 };
 const HTTP_OK_RESPONSE = " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 19\r\n\r\nMining Proxy Online";
 const MAX_JSON_LINE_BYTES = 128 * 1024;
+const ACCESS_CONTROL_REFRESH_MS = 60_000;
 
 function maybeUnref(timer) {
     if (timer && typeof timer.unref === "function") timer.unref();
@@ -344,28 +345,51 @@ class AccessControl {
         this.config = config;
         this.lastLoadedAt = 0;
         this.entries = Object.create(null);
+        this.fileSignature = null;
     }
 
-    reloadIfNeeded(force = false) {
-        if (!this.config.accessControl.enabled) return;
-        const now = Date.now();
-        if (!force && now - this.lastLoadedAt < 60_000) return;
-        this.lastLoadedAt = now;
+    getControlFileSignature() {
+        const stats = fs.statSync(this.config.accessControl.controlFile);
+        return `${stats.mtimeMs}:${stats.size}`;
+    }
+
+    loadEntries(signature, loadedAt = Date.now()) {
         const rawEntries = loadJsonFile(this.config.accessControl.controlFile);
         if (!rawEntries || typeof rawEntries !== "object" || Array.isArray(rawEntries)) {
             throw new Error("access control file must contain a JSON object");
         }
         this.entries = rawEntries;
+        this.fileSignature = signature ?? this.getControlFileSignature();
+        this.lastLoadedAt = loadedAt;
+    }
+
+    hasMatch(username, password) {
+        return Object.prototype.hasOwnProperty.call(this.entries, username) && this.entries[username] === password;
+    }
+
+    reloadIfNeeded(force = false) {
+        if (!this.config.accessControl.enabled) return;
+        const now = Date.now();
+        if (!force && now - this.lastLoadedAt < ACCESS_CONTROL_REFRESH_MS) return;
+        this.lastLoadedAt = now;
+        const signature = this.getControlFileSignature();
+        if (!force && signature === this.fileSignature) return;
+        this.loadEntries(signature, now);
+    }
+
+    reloadIfChangedAfterMiss() {
+        if (!this.config.accessControl.enabled) return;
+        const signature = this.getControlFileSignature();
+        if (signature === this.fileSignature) return;
+        this.loadEntries(signature);
     }
 
     isAllowed(username, password) {
         if (!this.config.accessControl.enabled) return true;
         this.reloadIfNeeded();
-        if (Object.prototype.hasOwnProperty.call(this.entries, username) && this.entries[username] === password) {
-            return true;
-        }
-        this.reloadIfNeeded(true);
-        return Object.prototype.hasOwnProperty.call(this.entries, username) && this.entries[username] === password;
+        if (this.hasMatch(username, password)) return true;
+        this.reloadIfChangedAfterMiss();
+        return this.hasMatch(username, password);
     }
 }
 
