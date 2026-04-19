@@ -66,6 +66,11 @@ Useful flags:
 
 `--standalone` is mainly for local development, harness-based tests, and debugging without the cluster runtime.
 
+Config reload:
+
+- Send `SIGHUP` to the running proxy to reload `config.json` in place
+- In `pm2`, use `pm2 sendSignal SIGHUP xnp`
+
 ## Minimal Config Example
 
 For a single MoneroOcean upstream over TLS:
@@ -149,6 +154,7 @@ PM2 best practice:
 - Do not add `--log-date-format` here. The proxy already timestamps every log line, so PM2-side timestamps only duplicate output.
 - `pm2 logs xnp` and `pm2 monit` work well with the new structured log format.
 - `pm2-logrotate` is still a good companion for long-running nodes.
+- `pm2 sendSignal SIGHUP xnp` reloads config without replacing the main process
 
 ## Logs
 
@@ -169,6 +175,7 @@ Operational notes:
 - Summary lines are throttled so they only print on meaningful change or once per minute
 - Warnings and errors include the fields you usually need first: `host`, `port`, `miner`, `job`, `nonce`, `reason`, `error`
 - If you are running behind another logger that already stamps lines, avoid adding a second timestamp layer
+- Set `XNP_LOG_TIME=0` if you want the proxy to emit `level component event ...` without its own timestamp prefix
 
 ## Configuration Guide
 
@@ -237,6 +244,8 @@ npm test
 Coverage includes:
 
 - miner login and keepalive aliases
+- clustered-mode worker respawn
+- clustered-mode `SIGHUP` config reload
 - valid share forwarding
 - duplicate share rejection
 - stale-template acceptance via cache
@@ -261,6 +270,7 @@ When adding support:
 Design rule:
 
 - The master and workers both instantiate the same adapter independently. New adapters should stay stateless apart from per-template or per-share data carried in runtime objects.
+- For out-of-tree adapters during development or packaging, point `XNP_COIN_FACTORY_DIR` at a directory that contains `<coin>.js`.
 
 ## Troubleshooting
 
@@ -295,8 +305,15 @@ node proxy.js --standalone
 
 The standalone runtime exists specifically so protocol and compatibility work can be tested without relying on a live upstream pool during normal development.
 
-## Support
+## Donations
 
 If you want to support the project directly, optional XMR donations can be sent to:
 
 `89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL`
+
+## Contributors
+
+- [MoneroOcean](https://github.com/MoneroOcean) for long-running maintenance and ongoing proxy evolution
+- Alexander Blair and [Snipa22](https://github.com/Snipa22) for the original public codebase and early architecture
+- djfinch, [M5M400](https://github.com/M5M400), Learner, Mike Teehan, Ethorsen, and tosokr for follow-up fixes, compatibility work, and docs
+- [1rV1N](https://github.com/1rV1N), MinerCircle, Mayday30, Connor, J. Meister, Mi!, Tom, mrmoo85, piratoskratos, slayerulan, sph34r, sunk818, sunxfof, tinyema, BK, and other smaller contributors for fixes and operational improvements

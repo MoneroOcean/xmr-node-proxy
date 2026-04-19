@@ -116,7 +116,21 @@ function formatLogMeta(meta) {
         .join(" ");
 }
 
-function createLogger({ prefix = "", component = "", debug = process.env.DEBUG || "" } = {}) {
+function envFlagEnabled(rawValue, defaultValue = true) {
+    if (rawValue === undefined || rawValue === null || rawValue === "") return defaultValue;
+
+    const normalized = String(rawValue).trim().toLowerCase();
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    return defaultValue;
+}
+
+function createLogger({
+    prefix = "",
+    component = "",
+    debug = process.env.DEBUG || "",
+    timestamps = envFlagEnabled(process.env.XNP_LOG_TIME, true)
+} = {}) {
     const patterns = compileDebugPatterns(debug);
     const componentValue = component || normalizeLoggerComponent(prefix);
     const levelLabels = {
@@ -127,12 +141,9 @@ function createLogger({ prefix = "", component = "", debug = process.env.DEBUG |
     };
 
     function write(level, sink, message, meta, namespace = "") {
-        const parts = [
-            formatTimestamp(),
-            levelLabels[level],
-            componentValue || "-",
-            namespace ? `${namespace} ${message}` : message
-        ];
+        const parts = [];
+        if (timestamps) parts.push(formatTimestamp());
+        parts.push(levelLabels[level], componentValue || "-", namespace ? `${namespace} ${message}` : message);
         const metaText = formatLogMeta(meta);
         if (metaText) parts.push(metaText);
         sink(parts.join(" "));
@@ -158,7 +169,11 @@ function createLogger({ prefix = "", component = "", debug = process.env.DEBUG |
             write("debug", console.log, message, meta, namespace);
         },
         child(childComponent) {
-            return createLogger({ component: normalizeLoggerComponent(childComponent) || componentValue, debug });
+            return createLogger({
+                component: normalizeLoggerComponent(childComponent) || componentValue,
+                debug,
+                timestamps
+            });
         }
     };
 }

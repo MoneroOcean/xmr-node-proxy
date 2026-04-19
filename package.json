@@ -1,7 +1,7 @@
 {
   "name": "xmr-node-proxy",
   "version": "0.29.0",
-  "description": "Node proxy for XMR pools based on nodejs-pool, should support any coins that nodejs-pool does with little work",
+  "description": "Lean XMR-style mining proxy for Monero-family pools and MoneroOcean-compatible switching",
   "main": "proxy.js",
   "scripts": {
     "start": "node proxy.js",

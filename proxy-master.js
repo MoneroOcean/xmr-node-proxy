@@ -1,18 +1,17 @@
 "use strict";
 
-const path = require("node:path");
-
 const {
-    humanHashrate,
     maybeUnref
 } = require("./proxy-common");
+const { loadCoinFactory } = require("./coin-loader");
+const { planPoolRebalance } = require("./proxy-balance");
 const { ProxyMonitor } = require("./proxy-monitor");
 const { UpstreamPoolClient } = require("./proxy-pool");
-
-function loadCoinFactory(coinName, overrides = {}) {
-    if (overrides[coinName]) return overrides[coinName];
-    return require(path.resolve(__dirname, `${coinName}.js`));
-}
+const {
+    buildMonitorSnapshot,
+    collectWorkerStats,
+    createSummaryState
+} = require("./proxy-stats");
 
 class MasterController {
     constructor(options) {
@@ -236,323 +235,92 @@ class MasterController {
     }
 
     enumerateWorkerStats() {
-        const globalStats = { miners: 0, hashes: 0, hashRate: 0, diff: 0 };
-        const poolAlgos = new Map();
-        const poolAlgosPerf = new Map();
         const inactivityDeadline = this.config.minerInactivityTime <= 0
             ? 0
             : Math.floor(Date.now() / 1000) - this.config.minerInactivityTime;
 
-        for (const [workerId, workerState] of this.workers) {
-            const stats = { miners: 0, hashes: 0, hashRate: 0, diff: 0 };
-            for (const [minerId, workerData] of workerState.stats) {
-                if (!workerData) {
-                    workerState.stats.delete(minerId);
-                    continue;
-                }
-                if (workerData.lastContact < inactivityDeadline) {
-                    workerState.stats.delete(minerId);
-                    continue;
-                }
-                stats.miners += 1;
-                stats.hashes += workerData.hashes;
-                stats.hashRate += workerData.avgSpeed;
-                stats.diff += workerData.diff;
-
-                const pool = this.pools.get(workerData.pool);
-                if (!pool) continue;
-                const minerAlgos = workerData.algos || pool.defaultAlgoSet;
-                if (poolAlgos.has(workerData.pool)) {
-                    const common = poolAlgos.get(workerData.pool);
-                    for (const algo of Object.keys(common)) {
-                        if (!(algo in minerAlgos)) delete common[algo];
-                    }
-                } else {
-                    poolAlgos.set(workerData.pool, { ...minerAlgos });
-                    poolAlgosPerf.set(workerData.pool, {});
-                }
-
-                if (workerData.algos_perf) {
-                    const perf = poolAlgosPerf.get(workerData.pool);
-                    for (const [algo, value] of Object.entries(workerData.algos_perf)) {
-                        perf[algo] = (perf[algo] || 0) + value;
-                    }
-                }
-            }
-
-            globalStats.miners += stats.miners;
-            globalStats.hashes += stats.hashes;
-            globalStats.hashRate += stats.hashRate;
-            globalStats.diff += stats.diff;
-
-            this.logger.debug("workers", `Worker ${workerId}: ${stats.miners} miners at ${stats.hashRate} h/s`);
-        }
-
-        this.hashrateAlgo = "h/s";
-        for (const [poolName, algos] of poolAlgos) {
-            const pool = this.pools.get(poolName);
-            if (!pool) continue;
-            const perf = poolAlgosPerf.get(poolName);
-            const perfToUse = Object.keys(perf).length > 0 ? perf : pool.defaultAlgosPerf;
-            pool.updateAlgoPerf(algos, perfToUse);
-            const algoKeys = Object.keys(algos);
-            if (algoKeys.length === 1) {
-                const algo = algoKeys[0];
-                if (algo === "c29s" || algo === "c29v") {
-                    if (this.hashrateAlgo === "h/s" || this.hashrateAlgo === algo) {
-                        this.hashrateAlgo = algo;
-                    }
-                } else {
-                    this.hashrateAlgo = "h/s";
-                }
-            } else {
-                this.hashrateAlgo = "h/s";
-            }
-        }
-
-        const averageDiff = globalStats.miners > 0 ? Math.floor(globalStats.diff / globalStats.miners) : 0;
-        const activePools = Array.from(this.pools.keys()).filter((hostname) => this.isPoolUsable(hostname)).length;
-        const hashrateBucket = globalStats.hashRate >= 1000
-            ? Math.round(globalStats.hashRate / 100) * 100
-            : Math.round(globalStats.hashRate / 10) * 10;
-        const summaryKey = JSON.stringify({
-            miners: globalStats.miners,
-            hashrateBucket,
-            averageDiff,
-            activePools,
-            algo: this.hashrateAlgo
+        const { globalStats, hashrateAlgo } = collectWorkerStats({
+            inactivityDeadline,
+            logger: this.logger,
+            pools: this.pools,
+            workers: this.workers
         });
-        const now = Date.now();
+
+        this.hashrateAlgo = hashrateAlgo;
+
+        const summary = createSummaryState({
+            globalStats,
+            hashrateAlgo: this.hashrateAlgo,
+            isPoolUsable: (hostname) => this.isPoolUsable(hostname),
+            lastSummaryKey: this.lastSummaryKey,
+            lastSummaryLogAt: this.lastSummaryLogAt,
+            pools: this.pools
+        });
+
         // Keep a heartbeat in logs without reprinting the same fleet summary every 15s.
-        if (summaryKey !== this.lastSummaryKey || (now - this.lastSummaryLogAt) >= 60_000) {
-            this.logger.info("proxy.summary", {
-                miners: globalStats.miners,
-                hashrate: humanHashrate(globalStats.hashRate, this.hashrateAlgo),
-                avgDiff: globalStats.miners > 0 ? averageDiff : undefined,
-                activePools,
-                algo: this.hashrateAlgo !== "h/s" ? this.hashrateAlgo : undefined
-            });
-            this.lastSummaryKey = summaryKey;
-            this.lastSummaryLogAt = now;
+        if (summary.shouldLog) {
+            this.logger.info("proxy.summary", summary.meta);
+            this.lastSummaryKey = summary.summaryKey;
+            this.lastSummaryLogAt = summary.loggedAt;
         }
     }
 
     balanceWorkers() {
-        const minerStates = {};
-        const poolStates = {};
-
-        for (const [poolName, pool] of this.pools) {
-            if (!poolStates[pool.coin]) {
-                poolStates[pool.coin] = { totalPercentage: 0, activePoolCount: 0, devPool: null };
-            }
-            poolStates[pool.coin][poolName] = {
-                miners: {},
-                hashrate: 0,
-                percentage: pool.share,
+        const { changes, warnings } = planPoolRebalance({
+            developerShare: this.config.developerShare,
+            isPoolUsable: (hostname) => this.isPoolUsable(hostname),
+            miners: this.getActiveMinerViews(),
+            pools: Array.from(this.pools.values()).map((pool) => ({
+                coin: pool.coin,
                 devPool: pool.devPool,
-                idealRate: 0
-            };
-            if (pool.devPool) {
-                poolStates[pool.coin].devPool = poolName;
-            } else if (this.isPoolUsable(poolName)) {
-                poolStates[pool.coin].totalPercentage += pool.share;
-                poolStates[pool.coin].activePoolCount += 1;
-            }
-            if (!minerStates[pool.coin]) minerStates[pool.coin] = { hashrate: 0 };
+                name: pool.hostname,
+                share: pool.share
+            }))
+        });
+
+        for (const warning of warnings) {
+            this.logger.warn("pool.balance_skipped", warning);
         }
 
-        for (const [coin, state] of Object.entries(poolStates)) {
-            if (state.totalPercentage !== 100) {
-                if (state.totalPercentage > 0) {
-                    const modifier = 100 / state.totalPercentage;
-                    for (const poolName of Object.keys(state)) {
-                        if (!this.pools.has(poolName)) continue;
-                        if (state[poolName].devPool || !this.isPoolUsable(poolName)) continue;
-                        state[poolName].percentage *= modifier;
-                    }
-                } else if (state.activePoolCount > 0) {
-                    const addModifier = 100 / state.activePoolCount;
-                    for (const poolName of Object.keys(state)) {
-                        if (!this.pools.has(poolName)) continue;
-                        if (state[poolName].devPool || !this.isPoolUsable(poolName)) continue;
-                        state[poolName].percentage += addModifier;
-                    }
-                } else {
-                    this.logger.warn("pool.balance_skipped", { coin, reason: "no-active-pools" });
-                    continue;
-                }
-            }
-            delete state.totalPercentage;
-            delete state.activePoolCount;
-        }
-
-        for (const [workerId, workerState] of this.workers) {
-            for (const [minerId, miner] of workerState.stats) {
-                if (!miner || !miner.active) continue;
-                if (!poolStates[miner.coin] || !poolStates[miner.coin][miner.pool]) continue;
-                minerStates[miner.coin].hashrate += miner.avgSpeed;
-                poolStates[miner.coin][miner.pool].hashrate += miner.avgSpeed;
-                poolStates[miner.coin][miner.pool].miners[`${workerId}_${minerId}`] = miner.avgSpeed;
-            }
-        }
-
-        for (const [coin, coinPools] of Object.entries(poolStates)) {
-            const coinMiners = minerStates[coin];
-            const devPoolName = coinPools.devPool;
-            const highPools = {};
-            const lowPools = {};
-            delete coinPools.devPool;
-
-            if (devPoolName) {
-                const devHashrate = Math.floor(coinMiners.hashrate * (this.config.developerShare / 100));
-                coinMiners.hashrate -= devHashrate;
-                coinPools[devPoolName].idealRate = devHashrate;
-                if (this.isPoolUsable(devPoolName) && coinPools[devPoolName].idealRate > coinPools[devPoolName].hashrate) {
-                    lowPools[devPoolName] = coinPools[devPoolName].idealRate - coinPools[devPoolName].hashrate;
-                } else if (!this.isPoolUsable(devPoolName) || coinPools[devPoolName].idealRate < coinPools[devPoolName].hashrate) {
-                    highPools[devPoolName] = coinPools[devPoolName].hashrate - coinPools[devPoolName].idealRate;
-                }
-            }
-
-            for (const poolName of Object.keys(coinPools)) {
-                if (poolName === devPoolName || !this.pools.has(poolName)) continue;
-                coinPools[poolName].idealRate = Math.floor(coinMiners.hashrate * (coinPools[poolName].percentage / 100));
-                if (this.isPoolUsable(poolName) && coinPools[poolName].idealRate > coinPools[poolName].hashrate) {
-                    lowPools[poolName] = coinPools[poolName].idealRate - coinPools[poolName].hashrate;
-                } else if (!this.isPoolUsable(poolName) || coinPools[poolName].idealRate < coinPools[poolName].hashrate) {
-                    highPools[poolName] = coinPools[poolName].hashrate - coinPools[poolName].idealRate;
-                }
-            }
-
-            const freedMiners = {};
-            for (const [poolName, delta] of Object.entries(highPools)) {
-                let remainder = delta;
-                for (const [minerKey, rate] of Object.entries(coinPools[poolName].miners)) {
-                    if ((rate <= remainder || !this.isPoolUsable(poolName)) && rate !== 0) {
-                        remainder -= rate;
-                        freedMiners[minerKey] = rate;
-                        delete coinPools[poolName].miners[minerKey];
-                    }
-                }
-            }
-
-            const minerChanges = {};
-            for (const [poolName, needed] of Object.entries(lowPools)) {
-                let remainder = needed;
-                minerChanges[poolName] = [];
-                for (const [minerKey, rate] of Object.entries(freedMiners)) {
-                    if (rate <= remainder) {
-                        minerChanges[poolName].push(minerKey);
-                        remainder -= rate;
-                        delete freedMiners[minerKey];
-                    }
-                }
-
-                if (remainder > 100) {
-                    for (const donorPool of Object.keys(coinPools)) {
-                        if (donorPool in lowPools) continue;
-                        for (const [minerKey, rate] of Object.entries(coinPools[donorPool].miners)) {
-                            if (rate <= remainder && rate !== 0) {
-                                minerChanges[poolName].push(minerKey);
-                                remainder -= rate;
-                                delete coinPools[donorPool].miners[minerKey];
-                            }
-                            if (remainder < 50) break;
-                        }
-                        if (remainder < 50) break;
-                    }
-                }
-            }
-
-            for (const poolName of Object.keys(lowPools)) {
-                if (poolName === devPoolName) continue;
-                if (!minerChanges[poolName]) minerChanges[poolName] = [];
-                for (const minerKey of Object.keys(freedMiners)) {
-                    minerChanges[poolName].push(minerKey);
-                    delete freedMiners[minerKey];
-                }
-            }
-
-            for (const [poolName, minerKeys] of Object.entries(minerChanges)) {
-                for (const minerKey of minerKeys) {
-                    const [workerId, minerId] = minerKey.split("_");
-                    const workerState = this.workers.get(workerId);
-                    if (!workerState) continue;
-                    workerState.send({
-                        type: "changePool",
-                        worker: minerId,
-                        pool: poolName
-                    });
-                }
-            }
+        for (const change of changes) {
+            const workerState = this.workers.get(change.workerId);
+            if (!workerState) continue;
+            workerState.send({
+                type: "changePool",
+                worker: change.minerId,
+                pool: change.pool
+            });
         }
     }
 
     getMonitorSnapshot() {
-        const miners = [];
-        const offlineMiners = [];
-        const seenNames = new Set();
-        const poolHashrate = new Map();
-        let totalMiners = 0;
-        let totalHashrate = 0;
+        return buildMonitorSnapshot({
+            developerShare: this.config.developerShare,
+            hashrateAlgo: this.hashrateAlgo,
+            isPoolUsable: (hostname) => this.isPoolUsable(hostname),
+            pools: this.pools,
+            workers: this.workers
+        });
+    }
 
-        for (const workerState of this.workers.values()) {
-            for (const miner of workerState.stats.values()) {
-                if (!miner) continue;
-                if (miner.active) {
-                    miners.push({
-                        ...miner,
-                        algo: this.pools.get(miner.pool)?.activeBlockTemplate?.algo || this.hashrateAlgo
-                    });
-                    seenNames.add(miner.logString);
-                    totalMiners += 1;
-                    totalHashrate += miner.avgSpeed;
-                    poolHashrate.set(miner.pool, (poolHashrate.get(miner.pool) || 0) + miner.avgSpeed);
-                } else {
-                    offlineMiners.push(miner);
-                }
+    getActiveMinerViews() {
+        const views = [];
+
+        for (const [workerId, workerState] of this.workers) {
+            for (const [minerId, miner] of workerState.stats) {
+                if (!miner || !miner.active) continue;
+                views.push({
+                    active: miner.active,
+                    avgSpeed: miner.avgSpeed,
+                    coin: miner.coin,
+                    minerId,
+                    pool: miner.pool,
+                    workerId
+                });
             }
         }
 
-        for (const miner of offlineMiners) {
-            if (seenNames.has(miner.logString)) continue;
-            miners.push({
-                ...miner,
-                algo: this.pools.get(miner.pool)?.activeBlockTemplate?.algo || this.hashrateAlgo
-            });
-            seenNames.add(miner.logString);
-        }
-
-        miners.sort((left, right) => {
-            if (left.active !== right.active) return left.active ? -1 : 1;
-            return right.avgSpeed - left.avgSpeed;
-        });
-
-        const pools = Array.from(this.pools.values())
-            .filter((pool) => !pool.devPool || this.config.developerShare > 0)
-            .map((pool) => ({
-                hostname: pool.hostname,
-                coin: pool.coin,
-                devPool: pool.devPool,
-                percentage: Number(pool.share || 0).toFixed(2),
-                active: this.isPoolUsable(pool.hostname),
-                hashrate: poolHashrate.get(pool.hostname) || 0,
-                height: pool.activeBlockTemplate?.height || null,
-                targetDiff: pool.activeBlockTemplate?.targetDiff || null,
-                algo: pool.activeBlockTemplate?.algo || null,
-                variant: pool.activeBlockTemplate?.variant || null
-            }))
-            .sort((left, right) => right.hashrate - left.hashrate);
-
-        return {
-            generatedAt: Date.now(),
-            generatedAtAgeMs: 0,
-            totalMiners,
-            totalHashrate,
-            hashrateAlgo: this.hashrateAlgo,
-            pools,
-            miners
-        };
+        return views;
     }
 }
 

@@ -2,7 +2,6 @@
 
 const fs = require("node:fs");
 const net = require("node:net");
-const path = require("node:path");
 const tls = require("node:tls");
 
 const {
@@ -10,12 +9,8 @@ const {
     CircularBuffer,
     maybeUnref,
 } = require("./proxy-common");
+const { loadCoinFactory } = require("./coin-loader");
 const { MinerProtocol } = require("./proxy-miner");
-
-function loadCoinFactory(coinName, overrides = {}) {
-    if (overrides[coinName]) return overrides[coinName];
-    return require(path.resolve(__dirname, `${coinName}.js`));
-}
 
 class WorkerController {
     constructor(options) {
