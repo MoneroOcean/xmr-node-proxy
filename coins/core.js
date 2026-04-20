@@ -25,6 +25,8 @@ function createCoins(options = {}) {
         logger = null
     } = options;
 
+    // This is the built-in XMR-style protocol implementation used by both master and worker runtimes.
+    // Compatibility fixes belong here instead of a config-selected module layer so behavior stays consistent.
     const { detectAlgo, hashFunc, hashFuncC29 } = createAlgoTools({ logger });
     const { BlockTemplate, MasterBlockTemplate, getJob, getMasterJob } = createTemplateTools({
         blobTypeGrin,

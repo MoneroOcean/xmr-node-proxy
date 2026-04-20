@@ -61,6 +61,7 @@ done
 
 NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
 if [[ "$NODE_MAJOR" -lt 18 ]]; then
+    # Stop early instead of leaving the checkout in a half-installed state with an unsupported Node runtime.
     echo "Node.js 18+ is required, but apt installed $(node -v)."
     exit 1
 fi
@@ -75,6 +76,7 @@ fi
 if [[ -f cert.key && -f cert.pem ]]; then
     :
 elif [[ -f cert.key || -f cert.pem ]]; then
+    # Avoid overwriting a surviving TLS file; operators should keep the pair together or recreate both.
     echo "Found only one TLS file. Keep both cert.key and cert.pem, or remove both and rerun install.sh."
     exit 1
 else

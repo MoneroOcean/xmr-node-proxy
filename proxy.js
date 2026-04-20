@@ -32,6 +32,8 @@ class StandaloneProxyApp {
     }
 
     createControllers(config) {
+        // Standalone mode keeps the normal master/worker boundary inside one process.
+        // Tests and local protocol work use this path so runtime behavior stays close to clustered mode.
         const master = new MasterController({
             config,
             logger: this.logger.child("master"),
@@ -119,6 +121,7 @@ class ClusterRuntimeManager {
     }
 
     createMasterController(config) {
+        // The primary process owns shared upstream state, balancing, stats, and the HTTP monitor.
         return new MasterController({
             config,
             logger: this.logger,
@@ -250,6 +253,7 @@ function createMasterRuntime(options) {
 function createWorkerRuntime(options) {
     const { config, coinsFactory, instanceId } = options;
     const logger = createLogger({ component: `worker.${cluster.worker?.id || 0}` });
+    // Worker processes handle miner-facing sockets and talk back to the primary process for shared pool state.
     const worker = new WorkerController({
         config,
         logger,

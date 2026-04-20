@@ -8,10 +8,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends g++ git libboost-date-time-dev libsodium-dev make nodejs npm openssl python3 \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy dependency metadata first so Docker can reuse the npm install layer when app code changes.
 COPY package.json ./
 RUN npm install --no-audit --no-fund --no-package-lock
 
 COPY . .
+# The image bakes in a starter config and self-signed certs for quick local runs.
+# Real deployments should usually mount their own config and TLS material instead.
 RUN cp --update=none config_example.json config.json \
     && openssl req -subj "/C=IT/ST=Pool/L=Daemon/O=Mining Pool/CN=mining.proxy" -newkey rsa:2048 -nodes -keyout cert.key -x509 -out cert.pem -days 36500
 

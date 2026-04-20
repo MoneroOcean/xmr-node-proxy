@@ -19,6 +19,8 @@ OLD_REV=$(git rev-parse --short HEAD)
 
 echo "Resetting local checkout to origin/master and removing untracked files."
 git fetch --prune origin
+# This script is intentionally destructive: it hard-resets tracked files and removes untracked repo files
+# so the checkout matches origin/master before dependencies are reinstalled and tests are rerun.
 git reset --hard origin/master
 git clean -fd
 rm -f package-lock.json

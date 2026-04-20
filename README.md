@@ -15,15 +15,13 @@ Lean mining proxy for XMR-style pools.
 
 It sits between miners and the upstream pool, keeps miner-facing difficulty local, fans out fresh jobs, balances miners across configured pools, and exposes a lightweight HTTP monitor for MoneroOcean-style XMR-family deployments.
 
-The current runtime is built for modern Node.js, keeps `proxy.js` as the entry point, and ships with a standalone test harness so changes can be verified without a live pool.
-
 ## Highlights
 
 - Modern Node.js runtime with `node >= 18`
-- Root-level modular codebase instead of the old `lib/` layout
-- Structured logs with lower noise and clearer operational detail
-- Standalone integration tests that do not require an active pool
-- Live-validated against MoneroOcean over TLS
+- Local miner-facing difficulty control and job fanout
+- Balancing and failover across configured upstream pools
+- Built-in HTTP monitor with optional basic auth
+- Structured logs with low operational noise
 
 ## What This Proxy Supports
 
@@ -81,9 +79,6 @@ Useful flags:
 
 - `node proxy.js --config /path/to/config.json`
 - `node proxy.js --workers 4`
-- `node proxy.js --standalone`
-
-`--standalone` is mainly for local development, harness-based tests, and debugging without the cluster runtime.
 
 Config reload:
 
@@ -160,21 +155,12 @@ For updating an existing checkout in place:
 bash update.sh
 ```
 
-What it does:
+Use it only when you want this checkout force-synced to the latest `origin/master` state.
 
-- verifies you are inside an `xmr-node-proxy` git checkout
-- fetches from `origin` and resets the checkout to `origin/master`
-- removes untracked files from the repo worktree
-- deletes local `package-lock.json` before reinstalling dependencies
-- refreshes local npm dependencies with the repo's normal install flags
-- runs `npm test` before telling you to restart the proxy
+Important:
 
-Use it when you want the local checkout to be force-synced to the current `origin/master` state.
-
-This is intentionally destructive for local repo changes:
-
-- tracked edits are discarded by `git reset --hard`
-- untracked files in the repo are removed by `git clean -fd`
+- local repo changes are discarded
+- untracked files in the repo are removed
 - ignored files such as `config.json`, TLS certs, and `node_modules/` are left in place
 
 ## Docker
@@ -200,13 +186,6 @@ If your config uses TLS listener files from the repo root, mount those too:
 ```bash
 docker run --rm -it -p 3333:3333 -p 8443:8443 -p 8081:8081 -v "$PWD/config.json:/xmr-node-proxy/config.json:ro" -v "$PWD/cert.key:/xmr-node-proxy/cert.key:ro" -v "$PWD/cert.pem:/xmr-node-proxy/cert.pem:ro" xmr-node-proxy
 ```
-
-Dockerfile notes:
-
-- it installs native build dependencies, then runs `npm install`
-- `COPY package.json ./` before `npm install` keeps the dependency layer cacheable
-- `COPY . .` then copies the rest of the repo into `/xmr-node-proxy`
-- the image creates a default `config.json` and self-signed cert pair at build time, but mounting your own config and certs is the more practical operator path
 
 ## Minimal Config Example
 
@@ -254,20 +233,11 @@ MoneroOcean note:
 - TLS port `20001` currently requires `ssl: true` and `allowSelfSignedSSL: true`
 - If your miner provides a real MoneroOcean `algo-perf` map, pass it through so pool-side algo selection stays accurate
 
-## Runtime Modes
+## Runtime
 
-Default `node proxy.js` mode uses one master process plus one worker per CPU core.
+Default `node proxy.js` mode uses all CPU cores available on the host.
 
-- Master: upstream pool connections, balancing, monitor, shared stats
-- Worker: miner sockets, local job fanout, share validation, failover handling
-
-For local verification or test harnesses, use:
-
-```bash
-node proxy.js --standalone
-```
-
-To cap cluster size explicitly:
+To cap worker count explicitly:
 
 ```bash
 node proxy.js --workers 2
@@ -370,47 +340,11 @@ Important limits:
 
 ## Testing
 
-The repo includes a standalone integration suite. It does not need a live pool.
+The repo includes a local test suite. It does not need a live pool.
 
 ```bash
 npm test
 ```
-
-Coverage includes:
-
-- miner login and keepalive aliases
-- clustered-mode worker respawn
-- clustered-mode `SIGHUP` config reload
-- valid share forwarding
-- duplicate share rejection
-- stale-template acceptance via cache
-- pool failover
-- access-control reloads
-- HTTP monitor auth
-- pool-side regression cases found during live MoneroOcean testing
-
-GitHub Actions currently runs:
-
-- Node `18` and `24` on `ubuntu-24.04`
-- Node `24` plus the runner-default Node on `ubuntu-latest`
-- Node `24` plus the runner-default Node on `macos-latest`
-
-## Built-In Protocol Code
-
-The runtime now always uses the in-tree XMR-style protocol implementation in [`coins/core.js`](./coins/core.js).
-
-If you want to broaden compatibility:
-
-1. Extend the built-in coins logic rather than adding config-selected coin modules.
-2. Keep pool-facing template handling separate from miner-facing template handling.
-3. Normalize upstream quirks at the coins boundary.
-   Examples: float-ish difficulty values, blob type aliases, nonce offset differences, algo naming quirks.
-4. Add or extend tests under [`test/`](./test) before treating a new pool behavior as supported.
-
-Design rule:
-
-- The master and workers both instantiate the same built-in coins logic independently.
-- In-tree runtime code lives under [`proxy/`](./proxy) and XMR-style protocol code under [`coins/`](./coins).
 
 ## Troubleshooting
 
@@ -433,16 +367,6 @@ TLS upstream fails on MoneroOcean `20001`
 Miners submit low-diff shares constantly
 
 - Use a better matching listening port difficulty or set fixed difficulty on the miner if needed.
-
-## Development
-
-Typical local loop:
-
-```bash
-npm test && node proxy.js --standalone
-```
-
-The standalone runtime exists specifically so protocol and compatibility work can be tested without relying on a live upstream pool during normal development.
 
 ## Donations
 
