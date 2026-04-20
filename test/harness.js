@@ -245,21 +245,23 @@ async function startHarness(options = {}) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xnp-test-"));
     const accessControlPath = path.join(tempDir, "access-control.json");
     const accessEntries = options.accessEntries || {};
+    const primaryHost = "127.0.0.1";
+    const backupHost = "localhost";
     await fs.writeFile(accessControlPath, JSON.stringify(accessEntries, null, 2));
 
-    const primaryPool = new FakePool(options.primaryTemplate || createTemplate(), { hostname: "127.0.0.1" });
+    const primaryPool = new FakePool(options.primaryTemplate || createTemplate(), { hostname: primaryHost });
     await primaryPool.start();
 
     let backupPool = null;
     if (options.backupTemplate) {
-        backupPool = new FakePool(options.backupTemplate, { hostname: "127.0.0.1" });
+        backupPool = new FakePool(options.backupTemplate, { hostname: backupHost });
         await backupPool.start();
     }
 
     const config = {
         pools: [
             {
-                hostname: "127.0.0.1",
+                hostname: primaryHost,
                 port: primaryPool.port,
                 ssl: false,
                 allowSelfSignedSSL: false,
@@ -280,14 +282,14 @@ async function startHarness(options = {}) {
                 diff: options.listeningDiff || 100
             }
         ],
-        bindAddress: "127.0.0.1",
+        bindAddress: primaryHost,
         developerShare: 0,
         accessControl: {
             enabled: options.accessControlEnabled === true,
             controlFile: accessControlPath
         },
         httpEnable: options.httpEnable === true,
-        httpAddress: "127.0.0.1",
+        httpAddress: primaryHost,
         httpPort: options.httpEnable ? 0 : 8081,
         httpUser: options.httpUser || "",
         httpPass: options.httpPass || "",
@@ -300,7 +302,7 @@ async function startHarness(options = {}) {
 
     if (backupPool) {
         config.pools.push({
-            hostname: "localhost",
+            hostname: backupHost,
             port: backupPool.port,
             ssl: false,
             allowSelfSignedSSL: false,
