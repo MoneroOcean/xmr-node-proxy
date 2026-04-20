@@ -26,8 +26,32 @@ async function getFreePort() {
 }
 
 async function listChildPids(parentPid) {
+    const parsePidLines = (stdout) => stdout
+        .split("\n")
+        .map((line) => Number.parseInt(line.trim(), 10))
+        .filter((value) => Number.isInteger(value));
+
+    try {
+        const stdout = await new Promise((resolve, reject) => {
+            cp.execFile("pgrep", ["-P", String(parentPid)], (error, output) => {
+                if (!error) {
+                    resolve(output);
+                    return;
+                }
+                if (error.code === 1) {
+                    resolve("");
+                    return;
+                }
+                reject(error);
+            });
+        });
+        return parsePidLines(stdout);
+    } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+    }
+
     return new Promise((resolve, reject) => {
-        cp.execFile("ps", ["-o", "pid=", "--ppid", String(parentPid)], (error, stdout) => {
+        cp.execFile("ps", ["-axo", "pid=,ppid="], (error, stdout) => {
             if (error) {
                 reject(error);
                 return;
@@ -35,8 +59,11 @@ async function listChildPids(parentPid) {
 
             const pids = stdout
                 .split("\n")
-                .map((line) => Number.parseInt(line.trim(), 10))
-                .filter((value) => Number.isInteger(value));
+                .map((line) => line.trim())
+                .filter(Boolean)
+                .map((line) => line.split(/\s+/, 2).map((value) => Number.parseInt(value, 10)))
+                .filter(([pid, ppid]) => Number.isInteger(pid) && ppid === parentPid)
+                .map(([pid]) => pid);
             resolve(pids);
         });
     });
