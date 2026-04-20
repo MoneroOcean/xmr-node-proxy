@@ -102,9 +102,9 @@ Manual local install:
 
 `install.sh`:
 
-- best if you want a quick local setup on Ubuntu without typing each install step yourself
+- best if you want a quick local setup on a supported Linux host without typing each install step yourself
 - it sets up packages, local npm dependencies, default config, and self-signed certs
-- downside: it is Ubuntu/apt-oriented and still installs software directly onto the host machine
+- downside: it still installs software directly onto the host machine and depends on distro package availability for Node.js `18+`
 
 Docker:
 
@@ -120,7 +120,7 @@ For most beginners:
 
 ## install.sh
 
-For an apt-based local install from a repo checkout:
+For a supported Linux local install from a repo checkout:
 
 ```bash
 bash install.sh
@@ -128,22 +128,54 @@ bash install.sh
 
 What it does:
 
-- installs the required Ubuntu packages with `apt-get`
+- installs the required packages with `apt`, `dnf`, or `yum`, depending on the host
 - runs local `npm install`
 - creates `config.json` from `config_example.json` if needed
-- generates `cert.key` and `cert.pem` if they do not exist
+- generates `cert.key` and `cert.pem` only when both are missing
+- verifies the install with `npm test`
 
 Requirements:
 
 - run it from an `xmr-node-proxy` checkout
-- Ubuntu 26.04 or another apt-based Linux with equivalent package names
+- a Linux host with `apt`, `dnf`, or `yum`
+- Ubuntu 26.04, Rocky/Alma/RHEL 9+, or another compatible distro with equivalent package names
 - either `root` or a normal user with `sudo`
+
+Safety notes:
+
+- if apt installs a Node.js older than `18`, the script stops with an explicit error
+- if only one of `cert.key` or `cert.pem` exists, the script stops instead of overwriting the surviving file
 
 After it completes:
 
 ```bash
 node proxy.js --config /path/to/xmr-node-proxy/config.json
 ```
+
+## update.sh
+
+For updating an existing checkout in place:
+
+```bash
+bash update.sh
+```
+
+What it does:
+
+- verifies you are inside an `xmr-node-proxy` git checkout
+- fetches from `origin` and resets the checkout to `origin/master`
+- removes untracked files from the repo worktree
+- deletes local `package-lock.json` before reinstalling dependencies
+- refreshes local npm dependencies with the repo's normal install flags
+- runs `npm test` before telling you to restart the proxy
+
+Use it when you want the local checkout to be force-synced to the current `origin/master` state.
+
+This is intentionally destructive for local repo changes:
+
+- tracked edits are discarded by `git reset --hard`
+- untracked files in the repo are removed by `git clean -fd`
+- ignored files such as `config.json`, TLS certs, and `node_modules/` are left in place
 
 ## Docker
 
