@@ -5,10 +5,10 @@
 Lean mining proxy for XMR-style pools.
 
 <p>
-  <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-111111.svg" alt="GPL-3.0-or-later">
-  <img src="https://img.shields.io/badge/node-18%20%7C%2024%20%7C%20system-111111.svg" alt="Node 18, 24, and system">
-  <img src="https://img.shields.io/badge/runners-Ubuntu%20%2B%20macOS-111111.svg" alt="Ubuntu and macOS runners">
-  <a href="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml"><img src="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-111111.svg" alt="GPL-3.0-or-later"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-111111.svg" alt="Node 18+">
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-111111.svg" alt="Linux and macOS">
+  <img src="https://img.shields.io/badge/focus-mining%20proxy-111111.svg" alt="Mining proxy">
 </p>
 
 </div>
