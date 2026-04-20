@@ -1,33 +1,32 @@
 "use strict";
 
-function normalizeCoinPercentages(coinState, isPoolUsable) {
-    const percentageDelta = Math.abs(coinState.totalPercentage - 100);
+function normalizePoolPercentages(state, isPoolUsable) {
+    const percentageDelta = Math.abs(state.totalPercentage - 100);
     if (percentageDelta <= 0.001) return null;
 
-    if (coinState.totalPercentage > 0) {
-        const modifier = 100 / coinState.totalPercentage;
-        for (const poolState of Object.values(coinState.pools)) {
+    if (state.totalPercentage > 0) {
+        const modifier = 100 / state.totalPercentage;
+        for (const poolState of Object.values(state.pools)) {
             if (poolState.devPool || !isPoolUsable(poolState.name)) continue;
             poolState.percentage *= modifier;
         }
         return null;
     }
 
-    if (coinState.activePoolCount > 0) {
-        const addModifier = 100 / coinState.activePoolCount;
-        for (const poolState of Object.values(coinState.pools)) {
+    if (state.activePoolCount > 0) {
+        const addModifier = 100 / state.activePoolCount;
+        for (const poolState of Object.values(state.pools)) {
             if (poolState.devPool || !isPoolUsable(poolState.name)) continue;
             poolState.percentage += addModifier;
         }
         return null;
     }
 
-    return { coin: coinState.coin, reason: "no-active-pools" };
+    return { reason: "no-active-pools" };
 }
 
-function createCoinState(coinName) {
+function createBalanceState() {
     return {
-        coin: coinName,
         pools: {},
         totalPercentage: 0,
         activePoolCount: 0,
@@ -36,16 +35,16 @@ function createCoinState(coinName) {
     };
 }
 
-function classifyPoolDeltas(coinState, developerShare, isPoolUsable) {
+function classifyPoolDeltas(state, developerShare, isPoolUsable) {
     const highPools = {};
     const lowPools = {};
-    const devPoolName = coinState.devPoolName;
-    const remainingHashrate = coinState.totalHashrate;
+    const devPoolName = state.devPoolName;
+    const remainingHashrate = state.totalHashrate;
 
-    if (devPoolName && coinState.pools[devPoolName]) {
-        const devPool = coinState.pools[devPoolName];
+    if (devPoolName && state.pools[devPoolName]) {
+        const devPool = state.pools[devPoolName];
         const devHashrate = Math.floor(remainingHashrate * (developerShare / 100));
-        coinState.totalHashrate -= devHashrate;
+        state.totalHashrate -= devHashrate;
         devPool.idealRate = devHashrate;
         if (isPoolUsable(devPoolName) && devPool.idealRate > devPool.hashrate) {
             lowPools[devPoolName] = devPool.idealRate - devPool.hashrate;
@@ -54,9 +53,9 @@ function classifyPoolDeltas(coinState, developerShare, isPoolUsable) {
         }
     }
 
-    for (const poolState of Object.values(coinState.pools)) {
+    for (const poolState of Object.values(state.pools)) {
         if (poolState.name === devPoolName) continue;
-        poolState.idealRate = Math.floor(coinState.totalHashrate * (poolState.percentage / 100));
+        poolState.idealRate = Math.floor(state.totalHashrate * (poolState.percentage / 100));
         if (isPoolUsable(poolState.name) && poolState.idealRate > poolState.hashrate) {
             lowPools[poolState.name] = poolState.idealRate - poolState.hashrate;
         } else if (!isPoolUsable(poolState.name) || poolState.idealRate < poolState.hashrate) {
@@ -67,11 +66,11 @@ function classifyPoolDeltas(coinState, developerShare, isPoolUsable) {
     return { devPoolName, highPools, lowPools };
 }
 
-function freeMinerCapacity(coinState, highPools, isPoolUsable) {
+function freeMinerCapacity(state, highPools, isPoolUsable) {
     const freedMiners = {};
 
     for (const [poolName, delta] of Object.entries(highPools)) {
-        const poolState = coinState.pools[poolName];
+        const poolState = state.pools[poolName];
         if (!poolState) continue;
 
         let remainder = delta;
@@ -88,7 +87,7 @@ function freeMinerCapacity(coinState, highPools, isPoolUsable) {
     return freedMiners;
 }
 
-function allocateFreedMiners(coinState, lowPools, freedMiners, devPoolName) {
+function allocateFreedMiners(state, lowPools, freedMiners, devPoolName) {
     const minerChanges = {};
 
     for (const [poolName, needed] of Object.entries(lowPools)) {
@@ -104,10 +103,10 @@ function allocateFreedMiners(coinState, lowPools, freedMiners, devPoolName) {
 
         if (remainder <= 100) continue;
 
-        for (const donorPool of Object.keys(coinState.pools)) {
+        for (const donorPool of Object.keys(state.pools)) {
             if (donorPool in lowPools) continue;
 
-            const donorState = coinState.pools[donorPool];
+            const donorState = state.pools[donorPool];
             for (const [minerKey, rate] of Object.entries(donorState.miners)) {
                 if (rate > remainder || rate === 0) continue;
                 minerChanges[poolName].push(minerKey);
@@ -133,17 +132,12 @@ function allocateFreedMiners(coinState, lowPools, freedMiners, devPoolName) {
 }
 
 function planPoolRebalance({ pools, miners, developerShare = 0, isPoolUsable }) {
-    const coinStates = {};
+    const state = createBalanceState();
     const minerIndex = {};
     const warnings = [];
 
     for (const pool of pools) {
-        if (!coinStates[pool.coin]) {
-            coinStates[pool.coin] = createCoinState(pool.coin);
-        }
-
-        const coinState = coinStates[pool.coin];
-        coinState.pools[pool.name] = {
+        state.pools[pool.name] = {
             name: pool.name,
             devPool: pool.devPool === true,
             percentage: Number(pool.share || 0),
@@ -153,51 +147,46 @@ function planPoolRebalance({ pools, miners, developerShare = 0, isPoolUsable }) 
         };
 
         if (pool.devPool) {
-            coinState.devPoolName = pool.name;
+            state.devPoolName = pool.name;
         } else if (isPoolUsable(pool.name)) {
-            coinState.totalPercentage += Number(pool.share || 0);
-            coinState.activePoolCount += 1;
+            state.totalPercentage += Number(pool.share || 0);
+            state.activePoolCount += 1;
         }
     }
 
-    for (const coinState of Object.values(coinStates)) {
-        const warning = normalizeCoinPercentages(coinState, isPoolUsable);
-        if (warning) warnings.push(warning);
-    }
+    const warning = normalizePoolPercentages(state, isPoolUsable);
+    if (warning) warnings.push(warning);
 
     for (const miner of miners) {
         if (!miner.active) continue;
-        const coinState = coinStates[miner.coin];
-        const poolState = coinState?.pools[miner.pool];
+        const poolState = state.pools[miner.pool];
         if (!poolState) continue;
 
         const minerKey = `${miner.workerId}_${miner.minerId}`;
         minerIndex[minerKey] = miner;
-        coinState.totalHashrate += miner.avgSpeed;
+        state.totalHashrate += miner.avgSpeed;
         poolState.hashrate += miner.avgSpeed;
         poolState.miners[minerKey] = miner.avgSpeed;
     }
 
+    if (warnings.length > 0) {
+        return { changes: [], warnings };
+    }
+
+    const { devPoolName, highPools, lowPools } = classifyPoolDeltas(state, developerShare, isPoolUsable);
+    const freedMiners = freeMinerCapacity(state, highPools, isPoolUsable);
+    const minerChanges = allocateFreedMiners(state, lowPools, freedMiners, devPoolName);
     const changes = [];
 
-    for (const coinState of Object.values(coinStates)) {
-        const warning = warnings.find((entry) => entry.coin === coinState.coin);
-        if (warning) continue;
-
-        const { devPoolName, highPools, lowPools } = classifyPoolDeltas(coinState, developerShare, isPoolUsable);
-        const freedMiners = freeMinerCapacity(coinState, highPools, isPoolUsable);
-        const minerChanges = allocateFreedMiners(coinState, lowPools, freedMiners, devPoolName);
-
-        for (const [poolName, minerKeys] of Object.entries(minerChanges)) {
-            for (const minerKey of minerKeys) {
-                const miner = minerIndex[minerKey];
-                if (!miner) continue;
-                changes.push({
-                    workerId: miner.workerId,
-                    minerId: miner.minerId,
-                    pool: poolName
-                });
-            }
+    for (const [poolName, minerKeys] of Object.entries(minerChanges)) {
+        for (const minerKey of minerKeys) {
+            const miner = minerIndex[minerKey];
+            if (!miner) continue;
+            changes.push({
+                workerId: miner.workerId,
+                minerId: miner.minerId,
+                pool: poolName
+            });
         }
     }
 

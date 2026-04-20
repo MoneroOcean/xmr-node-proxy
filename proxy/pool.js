@@ -9,7 +9,7 @@ const {
     createLineParser,
     maybeUnref,
     respondToHttpProbe
-} = require("./proxy-common");
+} = require("./common");
 
 class UpstreamPoolClient {
     constructor(options) {
@@ -17,7 +17,7 @@ class UpstreamPoolClient {
         this.master = options.master;
         this.logger = options.logger;
         this.poolConfig = options.poolConfig;
-        this.coinAdapter = options.coinAdapter;
+        this.coins = options.coins;
 
         this.hostname = this.poolConfig.hostname;
         this.port = this.poolConfig.port;
@@ -27,7 +27,6 @@ class UpstreamPoolClient {
         this.password = this.poolConfig.password;
         this.keepAlive = this.poolConfig.keepAlive !== false;
         this.devPool = this.poolConfig.devPool === true;
-        this.coin = this.poolConfig.coin;
         this.blobType = this.poolConfig.blob_type;
         this.defaultAlgoSet = Object.fromEntries(this.poolConfig.algo.map((algo) => [algo, 1]));
         this.defaultAlgosPerf = { ...this.poolConfig.algo_perf };

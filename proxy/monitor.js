@@ -9,7 +9,7 @@ const {
     formatRelativeSeconds,
     humanHashrate,
     safeEqual
-} = require("./proxy-common");
+} = require("./common");
 
 class ProxyMonitor {
     constructor(options) {
@@ -108,7 +108,7 @@ class ProxyMonitor {
             return `
                 <section class="pool-card ${pool.active ? "pool-card--active" : "pool-card--inactive"}">
                     <h3>${titleMarkup}</h3>
-                    <p>${escapeHtml(pool.coin.toUpperCase())} pool${pool.devPool ? " (dev)" : ""}</p>
+                    <p>Upstream pool${pool.devPool ? " (dev)" : ""}</p>
                     <p>
                         ${humanHashrate(pool.hashrate, snapshot.hashrateAlgo)} routed,
                         ${escapeHtml(pool.percentage)}%

@@ -69,14 +69,6 @@ async function listChildPids(parentPid) {
     });
 }
 
-async function writeTestCoinModule(tempDir) {
-    const fakeCoinPath = path.resolve(__dirname, "fake-coin.js");
-    await fs.writeFile(
-        path.join(tempDir, "test.js"),
-        `module.exports = require(${JSON.stringify(fakeCoinPath)}).createFakeCoin;\n`
-    );
-}
-
 function collectLines(stream, lines) {
     stream.setEncoding("utf8");
     let buffer = "";
@@ -104,7 +96,6 @@ function createClusterConfig({ minerPort, primaryPoolPort, listeningDiff }) {
                 username: "wallet-primary",
                 password: "proxy",
                 keepAlive: true,
-                coin: "test",
                 algo: "test/algo",
                 algo_perf: { "test/algo": 1 },
                 blob_type: 0,
@@ -115,30 +106,26 @@ function createClusterConfig({ minerPort, primaryPoolPort, listeningDiff }) {
             {
                 port: minerPort,
                 ssl: false,
-                diff: listeningDiff,
-                coin: "test"
+                diff: listeningDiff
             }
         ],
         bindAddress: "127.0.0.1",
         developerShare: 0,
         httpEnable: false,
-        coinSettings: {
-            test: {
-                minDiff: 1,
-                maxDiff: 100000,
-                shareTargetTime: 30
-            }
+        difficultySettings: {
+            minDiff: 1,
+            maxDiff: 100000,
+            shareTargetTime: 30
         }
     };
 }
 
-function spawnClusterProxy({ configPath, coinDir }) {
+function spawnClusterProxy({ configPath }) {
     const lines = [];
-    const child = cp.spawn(process.execPath, ["proxy.js", "--workers", "1", "--config", configPath], {
+    const child = cp.spawn(process.execPath, ["test/cluster-proxy-bootstrap.js", "--workers", "1", "--config", configPath], {
         cwd: path.resolve(__dirname, ".."),
         env: {
             ...process.env,
-            XNP_COIN_FACTORY_DIR: coinDir,
             XNP_LOG_TIME: "0"
         },
         stdio: ["ignore", "pipe", "pipe"]
@@ -166,7 +153,6 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
         const minerPort = await getFreePort();
         const primaryPool = new FakePool(createTemplate(), { hostname: "127.0.0.1" });
         await primaryPool.start();
-        await writeTestCoinModule(tempDir);
 
         const configPath = path.join(tempDir, "config.json");
         await fs.writeFile(configPath, JSON.stringify(createClusterConfig({
@@ -175,11 +161,11 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
             listeningDiff: 100
         }), null, 2));
 
-        const proxy = spawnClusterProxy({ configPath, coinDir: tempDir });
+        const proxy = spawnClusterProxy({ configPath });
 
         try {
             await waitFor(() => primaryPool.loginRequests.length > 0);
-            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*coin=test`));
+            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*diff=100`));
 
             const firstClient = new JsonLineClient(minerPort);
             await firstClient.connect();
@@ -203,7 +189,7 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
                 const childPids = await listChildPids(proxy.child.pid);
                 return childPids.length === 1 && childPids[0] !== workerPid;
             }, 7_000);
-            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*coin=test`).test(line)).length >= 2, 7_000);
+            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*diff=100`).test(line)).length >= 2, 7_000);
 
             const secondClient = new JsonLineClient(minerPort);
             await secondClient.connect();
@@ -231,7 +217,6 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
         const backupPool = new FakePool(createTemplate({ jobId: "job-b", templateId: "tpl-b" }), { hostname: "127.0.0.1" });
         await primaryPool.start();
         await backupPool.start();
-        await writeTestCoinModule(tempDir);
 
         const configPath = path.join(tempDir, "config.json");
         await fs.writeFile(configPath, JSON.stringify(createClusterConfig({
@@ -240,11 +225,11 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
             listeningDiff: 100
         }), null, 2));
 
-        const proxy = spawnClusterProxy({ configPath, coinDir: tempDir });
+        const proxy = spawnClusterProxy({ configPath });
 
         try {
             await waitFor(() => primaryPool.loginRequests.length > 0);
-            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*coin=test`));
+            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*diff=100`));
 
             const firstClient = new JsonLineClient(minerPort);
             await firstClient.connect();
@@ -268,7 +253,7 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
             proxy.child.kill("SIGHUP");
             await proxy.waitForLine(/config\.reload_complete/);
             await waitFor(() => backupPool.loginRequests.length > 0, 7_000);
-            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*coin=test`).test(line)).length >= 2, 7_000);
+            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*diff=250`).test(line)).length >= 1, 7_000);
 
             const secondClient = new JsonLineClient(minerPort);
             await secondClient.connect();

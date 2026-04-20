@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { planPoolRebalance } = require("../proxy-balance");
+const { planPoolRebalance } = require("../proxy/balance");
 
 test("planPoolRebalance moves miners off an overloaded pool", () => {
     const result = planPoolRebalance({
@@ -12,12 +12,12 @@ test("planPoolRebalance moves miners off an overloaded pool", () => {
             return poolName === "alpha" || poolName === "beta";
         },
         miners: [
-            { active: true, avgSpeed: 60, coin: "xmr", minerId: "m1", pool: "alpha", workerId: "w1" },
-            { active: true, avgSpeed: 40, coin: "xmr", minerId: "m2", pool: "alpha", workerId: "w1" }
+            { active: true, avgSpeed: 60, minerId: "m1", pool: "alpha", workerId: "w1" },
+            { active: true, avgSpeed: 40, minerId: "m2", pool: "alpha", workerId: "w1" }
         ],
         pools: [
-            { coin: "xmr", devPool: false, name: "alpha", share: 50 },
-            { coin: "xmr", devPool: false, name: "beta", share: 50 }
+            { devPool: false, name: "alpha", share: 50 },
+            { devPool: false, name: "beta", share: 50 }
         ]
     });
 
@@ -27,23 +27,23 @@ test("planPoolRebalance moves miners off an overloaded pool", () => {
     ]);
 });
 
-test("planPoolRebalance reports coins with no active pools", () => {
+test("planPoolRebalance reports when no active pools are available", () => {
     const result = planPoolRebalance({
         developerShare: 1,
         isPoolUsable() {
             return false;
         },
         miners: [
-            { active: true, avgSpeed: 50, coin: "xmr", minerId: "m1", pool: "alpha", workerId: "w1" }
+            { active: true, avgSpeed: 50, minerId: "m1", pool: "alpha", workerId: "w1" }
         ],
         pools: [
-            { coin: "xmr", devPool: false, name: "alpha", share: 100 },
-            { coin: "xmr", devPool: true, name: "devshare", share: 0 }
+            { devPool: false, name: "alpha", share: 100 },
+            { devPool: true, name: "devshare", share: 0 }
         ]
     });
 
     assert.deepEqual(result.changes, []);
     assert.deepEqual(result.warnings, [
-        { coin: "xmr", reason: "no-active-pools" }
+        { reason: "no-active-pools" }
     ]);
 });

@@ -2,7 +2,7 @@
 
 const powHash = require("node-powhash");
 
-const { DEFAULT_ALGO } = require("./proxy-common");
+const { DEFAULT_ALGO } = require("../proxy/common");
 
 function randomxHasher(variant) {
     return (convertedBlob, blockTemplate) => powHash.randomx(convertedBlob, Buffer.from(blockTemplate.seed_hash, "hex"), variant);
@@ -70,7 +70,7 @@ const C29_HASHERS = {
     c29i: (header, ring) => powHash.c29i(header, ring)
 };
 
-function createXmrAlgoTools({ logger = null } = {}) {
+function createAlgoTools({ logger = null } = {}) {
     function detectAlgo(defaultAlgoSet, blockVersion) {
         if ("cn/r" in defaultAlgoSet && "rx/0" in defaultAlgoSet) {
             return blockVersion >= 12 ? "rx/0" : "cn/r";
@@ -105,5 +105,5 @@ function createXmrAlgoTools({ logger = null } = {}) {
 }
 
 module.exports = {
-    createXmrAlgoTools
+    createAlgoTools
 };

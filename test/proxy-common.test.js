@@ -6,7 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { AccessControl, createLogger } = require("../proxy-common");
+const { AccessControl, createLogger, normalizeConfig } = require("../proxy/common");
 
 test("createLogger can omit timestamps when requested", () => {
     const lines = [];
@@ -82,4 +82,58 @@ test("AccessControl still reloads immediately when the file changes", () => {
     } finally {
         fs.rmSync(tempDir, { recursive: true, force: true });
     }
+});
+
+test("normalizeConfig applies flat difficultySettings", () => {
+    const config = normalizeConfig({
+        pools: [
+            {
+                hostname: "pool.example.com",
+                port: 3333,
+                default: true
+            }
+        ],
+        listeningPorts: [
+            {
+                port: 4444,
+                diff: 100
+            }
+        ],
+        difficultySettings: {
+            minDiff: 2,
+            maxDiff: 2000,
+            shareTargetTime: 45
+        }
+    }, path.join(os.tmpdir(), "config.json"));
+
+    assert.deepEqual(config.difficultySettings, {
+        minDiff: 2,
+        maxDiff: 2000,
+        shareTargetTime: 45
+    });
+});
+
+test("normalizeConfig rejects legacy coinSettings with an upgrade message", () => {
+    assert.throws(() => normalizeConfig({
+        pools: [
+            {
+                hostname: "pool.example.com",
+                port: 3333,
+                default: true
+            }
+        ],
+        listeningPorts: [
+            {
+                port: 4444,
+                diff: 100
+            }
+        ],
+        coinSettings: {
+            xmr: {
+                minDiff: 2,
+                maxDiff: 2000,
+                shareTargetTime: 45
+            }
+        }
+    }, path.join(os.tmpdir(), "config.json")), /rename it to difficultySettings and update your config/);
 });

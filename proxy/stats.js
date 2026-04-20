@@ -1,6 +1,6 @@
 "use strict";
 
-const { humanHashrate } = require("./proxy-common");
+const { humanHashrate } = require("./common");
 
 function collectWorkerStats({ workers, pools, inactivityDeadline, logger }) {
     const globalStats = { miners: 0, hashes: 0, hashRate: 0, diff: 0 };
@@ -158,7 +158,6 @@ function buildMonitorSnapshot({ workers, pools, developerShare, hashrateAlgo, is
         .map((pool) => ({
             hostname: pool.hostname,
             username: pool.username || null,
-            coin: pool.coin,
             devPool: pool.devPool,
             percentage: Number(pool.share || 0).toFixed(2),
             active: isPoolUsable(pool.hostname),

@@ -6,7 +6,7 @@ const test = require("node:test");
 const tls = require("node:tls");
 const { once } = require("node:events");
 
-const { UpstreamPoolClient } = require("../proxy-pool");
+const { UpstreamPoolClient } = require("../proxy/pool");
 
 const TLS_KEY = `-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC5yaWybc3Pu8vW
@@ -113,14 +113,13 @@ function createClient(serverPort, overrides = {}) {
             username: "wallet",
             password: "worker",
             keepAlive: true,
-            coin: "xmr",
             algo: ["rx/0"],
             algo_perf: { "rx/0": 1 },
             blob_type: "cryptonote",
             default: true,
             ...overrides
         },
-        coinAdapter: {}
+        coins: {}
     });
 
     return { client, logger, templates, broadcasts };
@@ -193,6 +192,40 @@ test("UpstreamPoolClient retries quickly when MO says the template is not ready 
         assert.equal(client.sendLog.size, 0);
         assert.equal(client.connected, true);
         assert.equal(logger.entries.warn[0].message, "pool.no_template_yet");
+    } finally {
+        client.stop();
+        await new Promise((resolve) => server.close(resolve));
+    }
+});
+
+test("UpstreamPoolClient advertises algo and algo-perf during login for MO-style switching", async () => {
+    let loginRequest = null;
+    const server = net.createServer((socket) => {
+        attachJsonHandler(socket, (message) => {
+            if (message.method !== "login") return;
+            loginRequest = message;
+            socket.write(`${JSON.stringify({
+                id: message.id,
+                error: null,
+                result: {
+                    id: "session-ready",
+                    job: {
+                        job_id: "job-ready",
+                        target_diff: 10000
+                    }
+                }
+            })}\n`);
+        });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const { client } = createClient(server.address().port);
+    try {
+        client.start();
+        await waitFor(() => loginRequest !== null);
+        assert.deepEqual(loginRequest.params.algo, ["rx/0"]);
+        assert.deepEqual(loginRequest.params["algo-perf"], { "rx/0": 1 });
     } finally {
         client.stop();
         await new Promise((resolve) => server.close(resolve));

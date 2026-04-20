@@ -2,13 +2,13 @@
 
 const powHash = require("node-powhash");
 
-const { bufferToBigIntLE } = require("./proxy-common");
+const { bufferToBigIntLE } = require("../proxy/common");
 
 const BASE_DIFF = (1n << 256n) - 1n;
 const MAX_VERIFIED_SHARES_PER_SECOND = 10;
 const VERIFIED_SHARE_WINDOW_SECONDS = 5;
 
-function createXmrShareProcessor(options) {
+function createShareProcessor(options) {
     const {
         blobTypeGrin,
         constructNewBlob,
@@ -160,5 +160,5 @@ function createXmrShareProcessor(options) {
 }
 
 module.exports = {
-    createXmrShareProcessor
+    createShareProcessor
 };

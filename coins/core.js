@@ -3,8 +3,8 @@
 const {
     DEFAULT_ALGO,
     DEFAULT_ALGO_PERF,
-} = require("./proxy-common");
-const { createXmrAlgoTools } = require("./xmr-algos");
+} = require("../proxy/common");
+const { createAlgoTools } = require("./algos");
 const {
     blobTypeGrin,
     c29ProofSize,
@@ -12,21 +12,21 @@ const {
     convertBlob,
     nonceSize,
     parseBlobType
-} = require("./xmr-blob");
+} = require("./blob");
 const {
-    createXmrTemplateTools,
+    createTemplateTools,
     normalizeDifficulty
-} = require("./xmr-template");
-const { createXmrShareProcessor } = require("./xmr-share");
+} = require("./template");
+const { createShareProcessor } = require("./share");
 
-function createXmrCoin(options = {}) {
+function createCoins(options = {}) {
     const {
         instanceId = Buffer.from([0, 0, 0]),
         logger = null
     } = options;
 
-    const { detectAlgo, hashFunc, hashFuncC29 } = createXmrAlgoTools({ logger });
-    const { BlockTemplate, MasterBlockTemplate, getJob, getMasterJob } = createXmrTemplateTools({
+    const { detectAlgo, hashFunc, hashFuncC29 } = createAlgoTools({ logger });
+    const { BlockTemplate, MasterBlockTemplate, getJob, getMasterJob } = createTemplateTools({
         blobTypeGrin,
         c29ProofSize,
         convertBlob,
@@ -34,7 +34,7 @@ function createXmrCoin(options = {}) {
         nonceSize,
         parseBlobType
     });
-    const { processShare } = createXmrShareProcessor({
+    const { processShare } = createShareProcessor({
         blobTypeGrin,
         constructNewBlob,
         convertBlob,
@@ -51,7 +51,6 @@ function createXmrCoin(options = {}) {
         username: "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL",
         password: "proxy_donations",
         keepAlive: true,
-        coin: "xmr",
         default: false,
         devPool: true,
         algo: DEFAULT_ALGO,
@@ -65,8 +64,6 @@ function createXmrCoin(options = {}) {
         blobTypeGrin,
         c29ProofSize,
         convertBlob,
-        defaultAlgo: DEFAULT_ALGO,
-        defaultAlgoPerf: DEFAULT_ALGO_PERF,
         detectAlgo,
         devPool,
         getJob,
@@ -77,4 +74,4 @@ function createXmrCoin(options = {}) {
     };
 }
 
-module.exports = createXmrCoin;
+module.exports = createCoins;

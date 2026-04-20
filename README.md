@@ -192,7 +192,6 @@ For a single MoneroOcean upstream over TLS:
       "username": "YOUR_WALLET",
       "password": "proxy",
       "keepAlive": true,
-      "coin": "xmr",
       "algo": ["rx/0"],
       "algo_perf": { "rx/0": 1 },
       "blob_type": "cryptonote",
@@ -203,20 +202,17 @@ For a single MoneroOcean upstream over TLS:
     {
       "port": 3333,
       "ssl": false,
-      "diff": 1000,
-      "coin": "xmr"
+      "diff": 1000
     }
   ],
   "bindAddress": "0.0.0.0",
   "httpEnable": true,
   "httpAddress": "127.0.0.1",
   "httpPort": 8081,
-  "coinSettings": {
-    "xmr": {
-      "minDiff": 1,
-      "maxDiff": 10000000,
-      "shareTargetTime": 30
-    }
+  "difficultySettings": {
+    "minDiff": 1,
+    "maxDiff": 10000000,
+    "shareTargetTime": 30
   }
 }
 ```
@@ -286,12 +282,12 @@ Operational notes:
 
 Important fields:
 
-- `pools[]`: upstream pools for a given coin
+- `pools[]`: upstream pools
 - `pools[].share`: target balancing weight among active non-dev pools; `0` means backup-only
-- `pools[].default`: choose one default pool per coin; if older configs mark more than one, the last one wins
+- `pools[].default`: choose the default pool; if older configs mark more than one, the last one wins
 - `pools[].algo` and `pools[].algo_perf`: upstream algo declaration for pools such as MoneroOcean
 - `listeningPorts[]`: miner-facing ports and their starting difficulty
-- `coinSettings[coin]`: required for every coin referenced by pools or listening ports
+- `difficultySettings`: local vardiff bounds shared across miner-facing ports
 - `accessControl`: optional wallet/password allowlist that reloads from disk
 - `httpEnable`, `httpAddress`, `httpPort`, `httpUser`, `httpPass`: built-in monitor and optional basic auth
 - `tls.keyPath`, `tls.certPath`: local certificate pair for SSL listening ports
@@ -301,12 +297,13 @@ Validation rules enforced at startup:
 
 - At least one pool must exist
 - At least one listening port must exist
-- Every non-dev coin must have at least one default pool configured
-- Every referenced coin must have a matching `coinSettings` entry
+- At least one default non-dev pool must exist
+- `difficultySettings.minDiff`, `difficultySettings.maxDiff`, and `difficultySettings.shareTargetTime` must all be positive, and `minDiff <= maxDiff`
 
-Legacy note:
+Notes:
 
 - `daemonAddress` is not used by the current runtime. Remove it from older configs.
+- Old `coinSettings` configs are rejected at startup. Rename that block to `difficultySettings`.
 - The sample config intentionally uses placeholder wallets. The built-in developer-share path is separate and only applies if `developerShare > 0`.
 
 ## HTTP Monitor
@@ -335,6 +332,7 @@ Recent live tests against MoneroOcean TLS upstream succeeded for:
 Important limits:
 
 - The proxy only handles the XMR-style JSON-RPC path
+- SupportXMR-style single-coin XMR pools continue to use that same path
 - Active MoneroOcean algos that use non-XMR stratum families are out of scope here
 - `XTM-C` / `c29` is a separate pool-side protocol and should not be treated as a drop-in extension of the XMR path
 
@@ -361,28 +359,26 @@ Coverage includes:
 
 GitHub Actions currently runs:
 
-- Node `18`, `20`, and `22` on `ubuntu-24.04`
-- the runner-default Node on `ubuntu-24.04` and `ubuntu-latest`
+- Node `18` and `24` on `ubuntu-24.04`
+- Node `24` plus the runner-default Node on `ubuntu-latest`
+- Node `24` plus the runner-default Node on `macos-latest`
 
-GitHub does not currently publish an `ubuntu-26.04` hosted Linux runner label, so that runner is not in the matrix yet.
+## Built-In Protocol Code
 
-## Adding a New Coin or Algo
+The runtime now always uses the in-tree XMR-style protocol implementation in [`coins/core.js`](./coins/core.js).
 
-The main extension point is a coin adapter module such as [`xmr.js`](./xmr.js).
+If you want to broaden compatibility:
 
-When adding support:
-
-1. Create `<coin>.js` that exports the same adapter shape used by `xmr.js`.
+1. Extend the built-in coins logic rather than adding config-selected coin modules.
 2. Keep pool-facing template handling separate from miner-facing template handling.
-3. Normalize upstream quirks at the adapter boundary.
+3. Normalize upstream quirks at the coins boundary.
    Examples: float-ish difficulty values, blob type aliases, nonce offset differences, algo naming quirks.
-4. Add `coinSettings` and at least one default pool plus one listening port for the new coin.
-5. Add or extend tests under [`test/`](./test).
+4. Add or extend tests under [`test/`](./test) before treating a new pool behavior as supported.
 
 Design rule:
 
-- The master and workers both instantiate the same adapter independently. New adapters should stay stateless apart from per-template or per-share data carried in runtime objects.
-- For out-of-tree adapters during development or packaging, point `XNP_COIN_FACTORY_DIR` at a directory that contains `<coin>.js`.
+- The master and workers both instantiate the same built-in coins logic independently.
+- In-tree runtime code lives under [`proxy/`](./proxy) and XMR-style protocol code under [`coins/`](./coins).
 
 ## Troubleshooting
 

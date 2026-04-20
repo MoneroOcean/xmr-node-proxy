@@ -1,6 +1,6 @@
 {
   "name": "xmr-node-proxy",
-  "version": "0.29.1",
+  "version": "0.29.2",
   "description": "MoneroOcean-compatible XMR-style mining proxy for nodejs-pool with algo switching support",
   "main": "proxy.js",
   "bin": {

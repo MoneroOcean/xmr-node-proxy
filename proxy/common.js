@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const PROXY_VERSION = "0.29.1";
+const PROXY_VERSION = "0.29.2";
 const DEFAULT_ALGO = ["rx/0"];
 const DEFAULT_ALGO_PERF = { "rx/0": 1, "rx/loki": 1 };
 const HTTP_OK_RESPONSE = " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 19\r\n\r\nMining Proxy Online";
@@ -227,14 +227,13 @@ function resolvePath(baseDir, value) {
     return path.isAbsolute(value) ? value : path.resolve(baseDir, value);
 }
 
-function normalizePoolConfig(poolConfig, fallbackCoin = "xmr") {
+function normalizePoolConfig(poolConfig) {
     const algo = poolConfig.algo
         ? (Array.isArray(poolConfig.algo) ? poolConfig.algo : [poolConfig.algo])
         : DEFAULT_ALGO;
 
     return {
         ...poolConfig,
-        coin: poolConfig.coin || fallbackCoin,
         keepAlive: poolConfig.keepAlive !== false,
         allowSelfSignedSSL: poolConfig.allowSelfSignedSSL === true,
         default: poolConfig.default === true,
@@ -247,16 +246,35 @@ function normalizePoolConfig(poolConfig, fallbackCoin = "xmr") {
     };
 }
 
-function normalizePortConfig(portConfig, fallbackCoin = "xmr") {
+function normalizePortConfig(portConfig) {
     return {
         ...portConfig,
-        coin: portConfig.coin || fallbackCoin,
         ssl: portConfig.ssl === true,
         diff: Number(portConfig.diff || portConfig.difficulty || 1)
     };
 }
 
+function normalizeDifficultySettings(rawDifficultySettings) {
+    return {
+        minDiff: Number(rawDifficultySettings?.minDiff ?? 1),
+        maxDiff: Number(rawDifficultySettings?.maxDiff ?? 10000000),
+        shareTargetTime: Number(rawDifficultySettings?.shareTargetTime ?? 30)
+    };
+}
+
 function normalizeConfig(rawConfig, configPath) {
+    const {
+        coinSettings: legacyCoinSettings,
+        difficultySettings: rawDifficultySettings,
+        pools: _rawPools,
+        listeningPorts: _rawListeningPorts,
+        ...remainingConfig
+    } = rawConfig;
+
+    if (rawDifficultySettings === undefined && legacyCoinSettings !== undefined) {
+        throw new Error("config.coinSettings is no longer supported; rename it to difficultySettings and update your config");
+    }
+
     const configDir = path.dirname(configPath);
     const pools = Array.isArray(rawConfig.pools) ? rawConfig.pools.map((poolConfig) => normalizePoolConfig(poolConfig)) : [];
     const listeningPorts = Array.isArray(rawConfig.listeningPorts)
@@ -264,7 +282,7 @@ function normalizeConfig(rawConfig, configPath) {
         : [];
 
     const config = {
-        ...rawConfig,
+        ...remainingConfig,
         pools,
         listeningPorts,
         accessControl: rawConfig.accessControl && typeof rawConfig.accessControl === "object"
@@ -294,9 +312,7 @@ function normalizeConfig(rawConfig, configPath) {
                 keyPath: resolvePath(configDir, "cert.key"),
                 certPath: resolvePath(configDir, "cert.pem")
             },
-        coinSettings: rawConfig.coinSettings && typeof rawConfig.coinSettings === "object"
-            ? rawConfig.coinSettings
-            : { xmr: { minDiff: 1, maxDiff: 10000000, shareTargetTime: 30 } }
+        difficultySettings: normalizeDifficultySettings(rawDifficultySettings)
     };
 
     validateConfig(config);
@@ -311,31 +327,33 @@ function validateConfig(config) {
         throw new Error("config.listeningPorts must contain at least one listening port");
     }
 
-    const defaultsByCoin = new Map();
+    let hasDefaultPool = false;
     for (const pool of config.pools) {
         if (!pool.hostname || !Number.isInteger(Number(pool.port))) {
             throw new Error(`Invalid pool entry: ${JSON.stringify(pool)}`);
         }
-        if (pool.default) defaultsByCoin.set(pool.coin, pool.hostname);
+        if (pool.default && !pool.devPool) hasDefaultPool = true;
     }
 
-    const coins = new Set(config.pools.filter((pool) => !pool.devPool).map((pool) => pool.coin));
-    for (const coin of coins) {
-        if (!defaultsByCoin.has(coin)) {
-            throw new Error(`Missing default pool for coin ${coin}`);
-        }
-        if (!config.coinSettings[coin]) {
-            throw new Error(`Missing coinSettings entry for coin ${coin}`);
-        }
+    if (!hasDefaultPool) {
+        throw new Error("config.pools must contain at least one default non-dev pool");
+    }
+
+    if (
+        !Number.isFinite(config.difficultySettings.minDiff)
+        || !Number.isFinite(config.difficultySettings.maxDiff)
+        || !Number.isFinite(config.difficultySettings.shareTargetTime)
+        || config.difficultySettings.minDiff <= 0
+        || config.difficultySettings.maxDiff <= 0
+        || config.difficultySettings.shareTargetTime <= 0
+        || config.difficultySettings.minDiff > config.difficultySettings.maxDiff
+    ) {
+        throw new Error(`Invalid difficultySettings: ${JSON.stringify(config.difficultySettings)}`);
     }
 
     for (const portConfig of config.listeningPorts) {
         if (!Number.isInteger(Number(portConfig.port)) && portConfig.port !== 0) {
             throw new Error(`Invalid listening port: ${JSON.stringify(portConfig)}`);
-        }
-        const coinSettings = config.coinSettings[portConfig.coin];
-        if (!coinSettings) {
-            throw new Error(`Missing coinSettings entry for listening port coin ${portConfig.coin}`);
         }
     }
 }
@@ -425,7 +443,7 @@ function isPoolUsable(pools, hostname, isReady) {
 
     let topHeight = 0;
     for (const candidate of pools.values()) {
-        if (candidate.coin !== pool.coin || !isReady(candidate)) continue;
+        if (!isReady(candidate)) continue;
         if (Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) > 1000) continue;
         topHeight = Math.max(topHeight, candidate.activeBlockTemplate.height);
     }

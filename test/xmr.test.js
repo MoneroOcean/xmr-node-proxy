@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const createXmrCoin = require("../xmr");
+const createCoins = require("../coins/core");
 
 function createProxyTemplate(overrides = {}) {
     return {
@@ -22,11 +22,11 @@ function createProxyTemplate(overrides = {}) {
 }
 
 test("MasterBlockTemplate normalizes floating upstream pool target difficulty", () => {
-    const coin = createXmrCoin({
+    const coins = createCoins({
         instanceId: Buffer.from([1, 2, 3])
     });
 
-    const template = new coin.MasterBlockTemplate(createProxyTemplate());
+    const template = new coins.MasterBlockTemplate(createProxyTemplate());
 
     assert.equal(template.difficulty, 470000086);
     assert.equal(template.targetDiff, 123644);
@@ -34,7 +34,7 @@ test("MasterBlockTemplate normalizes floating upstream pool target difficulty", 
 });
 
 test("processShare handles floating pool target difficulty without throwing", () => {
-    const coin = createXmrCoin({
+    const coins = createCoins({
         instanceId: Buffer.from([1, 2, 3])
     });
     const warnings = [];
@@ -46,13 +46,13 @@ test("processShare handles floating pool target difficulty without throwing", ()
         pool: "live-mo"
     };
     const job = {
-        blob_type: coin.parseBlobType("cryptonote_arq"),
+        blob_type: coins.parseBlobType("cryptonote_arq"),
         extraNonce: 1,
         difficulty: 2
     };
-    const template = new coin.MasterBlockTemplate(createProxyTemplate());
+    const template = new coins.MasterBlockTemplate(createProxyTemplate());
 
-    const accepted = coin.processShare(miner, job, template, {
+    const accepted = coins.processShare(miner, job, template, {
         nonce: "00000000",
         result: "ff".repeat(32)
     }, {

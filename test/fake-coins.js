@@ -1,8 +1,8 @@
 "use strict";
 
-const { CircularBuffer, randomId } = require("../proxy-common");
+const { CircularBuffer, randomId } = require("../proxy/common");
 
-function createFakeCoin() {
+function createFakeCoins() {
     class WorkerBlockTemplate {
         constructor(template) {
             this.id = template.id;
@@ -161,7 +161,6 @@ function createFakeCoin() {
             username: "dev",
             password: "dev",
             keepAlive: true,
-            coin: "test",
             default: false,
             devPool: true,
             algo: ["test/algo"],
@@ -177,6 +176,4 @@ function createFakeCoin() {
     };
 }
 
-module.exports = {
-    createFakeCoin
-};
+module.exports = createFakeCoins;

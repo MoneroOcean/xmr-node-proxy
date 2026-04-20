@@ -4,13 +4,12 @@ const {
     CircularBuffer,
     bigIntToBufferBE,
     randomId
-} = require("./proxy-common");
-
+} = require("../proxy/common");
 const BASE_DIFF = (1n << 256n) - 1n;
 
 function normalizeDifficulty(value, fallback = 1) {
     // Some upstreams expose difficulty-like fields as floats or numeric strings
-    // such as target_diff. Normalize once here so the rest of the adapter can
+    // such as target_diff. Normalize once here so the rest of the coins logic can
     // safely use integer math and BigInt conversions.
     const numericValue = Number(value);
     if (Number.isFinite(numericValue) && numericValue > 0) {
@@ -31,7 +30,7 @@ function getTargetHex(difficulty, size) {
     return Buffer.from(diffBuffer.subarray(0, size)).reverse().toString("hex");
 }
 
-function createXmrTemplateTools(options = {}) {
+function createTemplateTools(options = {}) {
     const {
         blobTypeGrin,
         c29ProofSize,
@@ -240,7 +239,7 @@ function createXmrTemplateTools(options = {}) {
 }
 
 module.exports = {
-    createXmrTemplateTools,
+    createTemplateTools,
     getTargetHex,
     normalizeDifficulty
 };

@@ -8,7 +8,7 @@ const path = require("node:path");
 const { once } = require("node:events");
 
 const { createStandaloneApp } = require("../proxy");
-const { createFakeCoin } = require("./fake-coin");
+const createFakeCoins = require("./fake-coins");
 
 function createTemplate(options = {}) {
     const height = options.height ?? 100;
@@ -267,7 +267,6 @@ async function startHarness(options = {}) {
                 username: "wallet-primary",
                 password: "proxy",
                 keepAlive: true,
-                coin: "test",
                 algo: "test/algo",
                 algo_perf: { "test/algo": 1 },
                 blob_type: 0,
@@ -278,8 +277,7 @@ async function startHarness(options = {}) {
             {
                 port: 0,
                 ssl: false,
-                diff: options.listeningDiff || 100,
-                coin: "test"
+                diff: options.listeningDiff || 100
             }
         ],
         bindAddress: "127.0.0.1",
@@ -293,12 +291,10 @@ async function startHarness(options = {}) {
         httpPort: options.httpEnable ? 0 : 8081,
         httpUser: options.httpUser || "",
         httpPass: options.httpPass || "",
-        coinSettings: {
-            test: {
-                minDiff: 1,
-                maxDiff: 100000,
-                shareTargetTime: 30
-            }
+        difficultySettings: {
+            minDiff: 1,
+            maxDiff: 100000,
+            shareTargetTime: 30
         }
     };
 
@@ -312,7 +308,6 @@ async function startHarness(options = {}) {
             username: "wallet-backup",
             password: "proxy",
             keepAlive: true,
-            coin: "test",
             algo: "test/algo",
             algo_perf: { "test/algo": 1 },
             blob_type: 0,
@@ -322,7 +317,7 @@ async function startHarness(options = {}) {
 
     const app = createStandaloneApp(config, {
         configPath: path.join(tempDir, "config.json"),
-        coinFactories: { test: createFakeCoin }
+        coinsFactory: createFakeCoins
     });
     app.start();
 

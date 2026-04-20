@@ -3,23 +3,22 @@
 const {
     isPoolUsable: resolvePoolUsability,
     maybeUnref
-} = require("./proxy-common");
-const { loadCoinFactory } = require("./coin-loader");
-const { planPoolRebalance } = require("./proxy-balance");
-const { ProxyMonitor } = require("./proxy-monitor");
-const { UpstreamPoolClient } = require("./proxy-pool");
+} = require("./common");
+const { planPoolRebalance } = require("./balance");
+const { ProxyMonitor } = require("./monitor");
+const { UpstreamPoolClient } = require("./pool");
 const {
     buildMonitorSnapshot,
     collectWorkerStats,
     createSummaryState
-} = require("./proxy-stats");
+} = require("./stats");
 
 class MasterController {
     constructor(options) {
         this.config = options.config;
         this.logger = options.logger;
-        this.coinFactories = options.coinFactories || {};
         this.instanceId = options.instanceId;
+        this.coins = options.coinsFactory({ instanceId: this.instanceId, logger: this.logger });
         this.workers = new Map();
         this.pools = new Map();
         this.hashrateAlgo = "h/s";
@@ -69,21 +68,12 @@ class MasterController {
     }
 
     connectPools() {
-        const seenCoins = new Set();
         for (const poolConfig of this.config.pools) {
             this.ensurePool(poolConfig);
-            seenCoins.add(poolConfig.coin);
         }
 
-        if (this.config.developerShare > 0) {
-            for (const coin of seenCoins) {
-                const factory = loadCoinFactory(coin, this.coinFactories);
-                const coinAdapter = factory({ instanceId: this.instanceId, logger: this.logger });
-                const devPoolConfig = coinAdapter.devPool;
-                if (!this.pools.has(devPoolConfig.hostname)) {
-                    this.ensurePool(devPoolConfig);
-                }
-            }
+        if (this.config.developerShare > 0 && !this.pools.has(this.coins.devPool.hostname)) {
+            this.ensurePool(this.coins.devPool);
         }
 
         for (const pool of this.pools.values()) {
@@ -93,16 +83,14 @@ class MasterController {
 
     ensurePool(poolConfig) {
         if (this.pools.has(poolConfig.hostname)) return this.pools.get(poolConfig.hostname);
-        const factory = loadCoinFactory(poolConfig.coin, this.coinFactories);
         // The master owns upstream pool IO and template fanout, but it uses the same
-        // adapter surface as workers so pool-side and miner-side template handling stay in sync.
-        const coinAdapter = factory({ instanceId: this.instanceId, logger: this.logger });
+        // coins surface as workers so pool-side and miner-side handling stay in sync.
         const pool = new UpstreamPoolClient({
             config: this.config,
             master: this,
             logger: this.logger,
             poolConfig,
-            coinAdapter
+            coins: this.coins
         });
         this.pools.set(pool.hostname, pool);
         return pool;
@@ -132,7 +120,7 @@ class MasterController {
             const blockVersion = templateCopy.blocktemplate_blob
                 ? parseInt(templateCopy.blocktemplate_blob.slice(0, 2), 16)
                 : 0;
-            templateCopy.algo = pool.coinAdapter.detectAlgo(pool.defaultAlgoSet, blockVersion);
+            templateCopy.algo = pool.coins.detectAlgo(pool.defaultAlgoSet, blockVersion);
         }
         if (!templateCopy.blob_type) {
             templateCopy.blob_type = pool.blobType;
@@ -147,7 +135,7 @@ class MasterController {
             if (pool.activeBlockTemplate) {
                 pool.pastBlockTemplates.enq(pool.activeBlockTemplate);
             }
-            pool.activeBlockTemplate = new pool.coinAdapter.MasterBlockTemplate(templateCopy);
+            pool.activeBlockTemplate = new pool.coins.MasterBlockTemplate(templateCopy);
             pool.enabled = true;
             this.logger.info("pool.job", {
                 host: pool.hostname,
@@ -162,7 +150,7 @@ class MasterController {
                 workerState.send({
                     host: pool.hostname,
                     type: "newBlockTemplate",
-                    data: pool.coinAdapter.getMasterJob(pool, workerId)
+                    data: pool.coins.getMasterJob(pool, workerId)
                 });
             }
         } catch (error) {
@@ -197,7 +185,7 @@ class MasterController {
                 workerState.send({
                     host: hostname,
                     type: "newBlockTemplate",
-                    data: pool.coinAdapter.getMasterJob(pool, workerId)
+                    data: pool.coins.getMasterJob(pool, workerId)
                 });
             }
             return;
@@ -256,7 +244,6 @@ class MasterController {
             isPoolUsable: (hostname) => this.isPoolUsable(hostname),
             miners: this.getActiveMinerViews(),
             pools: Array.from(this.pools.values()).map((pool) => ({
-                coin: pool.coin,
                 devPool: pool.devPool,
                 name: pool.hostname,
                 share: pool.share
@@ -311,7 +298,6 @@ class MasterController {
                 views.push({
                     active: miner.active,
                     avgSpeed: miner.avgSpeed,
-                    coin: miner.coin,
                     minerId,
                     pool: miner.pool,
                     workerId

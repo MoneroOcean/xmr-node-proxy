@@ -9,21 +9,20 @@ const {
     CircularBuffer,
     isPoolUsable: resolvePoolUsability,
     maybeUnref,
-} = require("./proxy-common");
-const { loadCoinFactory } = require("./coin-loader");
-const { MinerProtocol } = require("./proxy-miner");
+} = require("./common");
+const { MinerProtocol } = require("./miner");
 
 class WorkerController {
     constructor(options) {
         this.config = options.config;
         this.logger = options.logger;
-        this.coinFactories = options.coinFactories || {};
         this.instanceId = options.instanceId;
+        this.coins = options.coinsFactory({ instanceId: this.instanceId, logger: this.logger });
         this.sendToMaster = options.sendToMaster;
         this.accessControl = new AccessControl(this.config);
         this.activeMiners = new Map();
         this.pools = new Map();
-        this.defaultPools = new Map();
+        this.defaultPool = null;
         this.protocol = new MinerProtocol(this);
         this.servers = [];
         this.updateDiffTimer = null;
@@ -68,30 +67,22 @@ class WorkerController {
         for (const poolConfig of this.config.pools) {
             this.ensurePool(poolConfig);
             if (poolConfig.default) {
-                this.defaultPools.set(poolConfig.coin, poolConfig.hostname);
+                this.defaultPool = poolConfig.hostname;
             }
         }
 
-        if (this.config.developerShare > 0) {
-            for (const poolState of Array.from(this.pools.values())) {
-                const devPool = poolState.coinAdapter.devPool;
-                if (!this.pools.has(devPool.hostname)) {
-                    this.ensurePool(devPool);
-                }
-            }
+        if (this.config.developerShare > 0 && !this.pools.has(this.coins.devPool.hostname)) {
+            this.ensurePool(this.coins.devPool);
         }
     }
 
     ensurePool(poolConfig) {
         if (this.pools.has(poolConfig.hostname)) return this.pools.get(poolConfig.hostname);
-        const factory = loadCoinFactory(poolConfig.coin, this.coinFactories);
         // Workers do miner-facing validation locally, so they must build the same
-        // coin adapter contract as the master. Keep adapter factories deterministic
-        // and free of hidden global state when adding new coin modules.
-        const coinAdapter = factory({ instanceId: this.instanceId, logger: this.logger });
+        // coins contract as the master.
         const poolState = {
             ...poolConfig,
-            coinAdapter,
+            coins: this.coins,
             active: false,
             activeBlockTemplate: null,
             pastBlockTemplates: new CircularBuffer(4),
@@ -118,11 +109,11 @@ class WorkerController {
         );
     }
 
-    chooseInitialPool(coin) {
-        const defaultPool = this.defaultPools.get(coin);
+    chooseInitialPool() {
+        const defaultPool = this.defaultPool;
         if (defaultPool && this.isPoolUsable(defaultPool)) return defaultPool;
         for (const [hostname, pool] of this.pools) {
-            if (pool.coin !== coin || pool.devPool) continue;
+            if (pool.devPool) continue;
             if (this.isPoolUsable(hostname)) return hostname;
         }
         return defaultPool || null;
@@ -144,7 +135,7 @@ class WorkerController {
                 pool.pastBlockTemplates.enq(pool.activeBlockTemplate);
             }
             pool.active = true;
-            pool.activeBlockTemplate = new pool.coinAdapter.BlockTemplate(message.data);
+            pool.activeBlockTemplate = new pool.coins.BlockTemplate(message.data);
             for (const miner of this.activeMiners.values()) {
                 if (miner.pool === message.host) miner.pushNewJob();
             }
@@ -198,7 +189,6 @@ class WorkerController {
                     host: address.address,
                     port: address.port,
                     tls: portData.ssl,
-                    coin: portData.coin,
                     diff: portData.diff
                 });
             });
@@ -212,8 +202,7 @@ class WorkerController {
             return {
                 requestedPort: portData.port,
                 actualPort: address.port,
-                ssl: portData.ssl,
-                coin: portData.coin
+                ssl: portData.ssl
             };
         });
     }
@@ -241,7 +230,7 @@ class WorkerController {
         const reassignedMiners = [];
         for (const [hostname, pool] of this.pools) {
             if (pool.active) continue;
-            const fallbackHost = this.chooseInitialPool(pool.coin);
+            const fallbackHost = this.chooseInitialPool();
             if (!fallbackHost || fallbackHost === hostname) continue;
             for (const miner of this.activeMiners.values()) {
                 if (miner.pool !== hostname) continue;

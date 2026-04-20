@@ -6,7 +6,7 @@ const {
     randomId,
     respondToHttpProbe,
     writeJsonLine
-} = require("./proxy-common");
+} = require("./common");
 
 const NONCE_32_HEX = /^[0-9a-f]{8}$/;
 const NONCE_64_HEX = /^[0-9a-f]{16}$/;
@@ -19,9 +19,8 @@ class MinerSession {
         this.pushMessage = options.pushMessage;
         this.portData = options.portData;
         this.protocol = "default";
-        this.coin = options.portData.coin;
-        this.coinAdapter = options.coinAdapter;
-        this.coinSettings = options.coinSettings;
+        this.coins = options.coins;
+        this.difficultySettings = options.difficultySettings;
         this.connectTime = Date.now();
         this.lastShareTime = Date.now() / 1000;
         this.shares = 0;
@@ -65,7 +64,7 @@ class MinerSession {
         }
         this.algosPerf = options.params["algo-perf"] || null;
 
-        this.pool = this.runtime.chooseInitialPool(this.coin);
+        this.pool = this.runtime.chooseInitialPool();
         if (loginDiffSplit.length === 2) {
             this.fixedDiff = true;
             this.difficulty = Number(loginDiffSplit[1]);
@@ -80,7 +79,7 @@ class MinerSession {
         }
 
         if (!this.pool) {
-            this.invalidate("No active pool for this coin");
+            this.invalidate("No active pool available");
             return;
         }
 
@@ -98,7 +97,7 @@ class MinerSession {
         if (this.algos) {
             const blockTemplate = poolState.activeBlockTemplate;
             const blockVersion = blockTemplate.blob ? parseInt(blockTemplate.blob.slice(0, 2), 16) : 0;
-            const poolAlgo = poolState.coinAdapter.detectAlgo(poolState.defaultAlgoSet, blockVersion);
+            const poolAlgo = poolState.coins.detectAlgo(poolState.defaultAlgoSet, blockVersion);
             if (!(poolAlgo in this.algos)) {
                 this.runtime.logger.warn(`Miner ${this.logString} does not support ${poolAlgo}`);
             }
@@ -118,7 +117,7 @@ class MinerSession {
 
     getNewJob(bypassCache = false) {
         const poolState = this.runtime.pools.get(this.pool);
-        return this.coinAdapter.getJob(this, poolState.activeBlockTemplate, bypassCache);
+        return this.coins.getJob(this, poolState.activeBlockTemplate, bypassCache);
     }
 
     pushNewJob(bypassCache = false) {
@@ -132,8 +131,8 @@ class MinerSession {
 
     setNewDiff(difficulty) {
         this.newDiff = Math.round(difficulty);
-        if (this.newDiff > this.coinSettings.maxDiff) this.newDiff = this.coinSettings.maxDiff;
-        if (this.newDiff < this.coinSettings.minDiff) this.newDiff = this.coinSettings.minDiff;
+        if (this.newDiff > this.difficultySettings.maxDiff) this.newDiff = this.difficultySettings.maxDiff;
+        if (this.newDiff < this.difficultySettings.minDiff) this.newDiff = this.difficultySettings.minDiff;
         if (this.difficulty === this.newDiff) return false;
         this.runtime.logger.debug("diff", `Difficulty change for ${this.logString}`, { newDiff: this.newDiff });
         return true;
@@ -142,7 +141,7 @@ class MinerSession {
     updateDifficulty() {
         if (this.hashes <= 0 || this.fixedDiff) return;
         const elapsedSeconds = Math.max(1, Math.floor((Date.now() - this.connectTime) / 1000));
-        const newDiff = Math.floor(this.hashes / elapsedSeconds) * this.coinSettings.shareTargetTime;
+        const newDiff = Math.floor(this.hashes / elapsedSeconds) * this.difficultySettings.shareTargetTime;
         if (this.setNewDiff(newDiff)) this.pushNewJob();
     }
 
@@ -158,7 +157,6 @@ class MinerSession {
             connectTime: this.connectTime,
             lastContact: Math.floor(this.lastContact / 1000),
             lastShare: this.lastShareTime,
-            coin: this.coin,
             pool: this.pool,
             id: this.id,
             identifier: this.identifier,
@@ -300,9 +298,9 @@ class MinerProtocol {
     handleLogin(socket, request, portData, pushMessage, reply, replyFinal) {
         const params = this.getParams(request.params, replyFinal);
         if (!params) return;
-        const defaultPool = this.runtime.defaultPools.get(portData.coin) || Array.from(this.runtime.pools.keys())[0];
-        const coinAdapter = this.runtime.pools.get(defaultPool)?.coinAdapter;
-        const coinSettings = this.runtime.config.coinSettings[portData.coin];
+        const defaultPool = this.runtime.defaultPool || Array.from(this.runtime.pools.keys())[0];
+        const coins = this.runtime.pools.get(defaultPool)?.coins;
+        const difficultySettings = this.runtime.config.difficultySettings;
         const miner = new MinerSession({
             runtime: this.runtime,
             id: randomId(),
@@ -311,8 +309,8 @@ class MinerProtocol {
             portData,
             params,
             ip: socket.remoteAddress,
-            coinAdapter,
-            coinSettings
+            coins,
+            difficultySettings
         });
 
         if (!miner.validMiner) {
@@ -381,10 +379,10 @@ class MinerProtocol {
         }
 
         const blobTypeNum = job.blob_type;
-        const isGrin = miner.coinAdapter.blobTypeGrin(blobTypeNum);
+        const isGrin = miner.coins.blobTypeGrin(blobTypeNum);
         const badNonce = isGrin
-            ? (!Number.isInteger(params.nonce) || !Array.isArray(params.pow) || params.pow.length !== miner.coinAdapter.c29ProofSize(blobTypeNum))
-            : (typeof params.nonce !== "string" || !(miner.coinAdapter.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX.test(params.nonce) : NONCE_32_HEX.test(params.nonce)));
+            ? (!Number.isInteger(params.nonce) || !Array.isArray(params.pow) || params.pow.length !== miner.coins.c29ProofSize(blobTypeNum))
+            : (typeof params.nonce !== "string" || !(miner.coins.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX.test(params.nonce) : NONCE_32_HEX.test(params.nonce)));
 
         if (badNonce) {
             this.runtime.logger.warn("share.bad_nonce", {
@@ -429,7 +427,7 @@ class MinerProtocol {
             return;
         }
 
-        const accepted = miner.coinAdapter.processShare(miner, job, blockTemplate, params, {
+        const accepted = miner.coins.processShare(miner, job, blockTemplate, params, {
             onPoolShare: (data) => {
                 this.runtime.sendToMaster({
                     type: "shareFind",

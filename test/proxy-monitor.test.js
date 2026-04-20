@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { ProxyMonitor } = require("../proxy-monitor");
+const { ProxyMonitor } = require("../proxy/monitor");
 
 test("ProxyMonitor renders theme toggle, sortable headers, tooltip polish, and MoneroOcean links", () => {
     const monitor = new ProxyMonitor({
@@ -22,7 +22,6 @@ test("ProxyMonitor renders theme toggle, sortable headers, tooltip polish, and M
             {
                 hostname: "gulf.moneroocean.stream",
                 username: "wallet-demo",
-                coin: "xmr",
                 devPool: false,
                 percentage: "100.00",
                 active: true,

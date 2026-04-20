@@ -4,6 +4,7 @@ const cluster = require("node:cluster");
 const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
+const createCoins = require("./coins/core");
 
 const {
     PROXY_VERSION,
@@ -11,9 +12,9 @@ const {
     loadJsonFile,
     normalizeConfig,
     parseArgs
-} = require("./proxy-common");
-const { MasterController } = require("./proxy-master");
-const { WorkerController } = require("./proxy-worker");
+} = require("./proxy/common");
+const { MasterController } = require("./proxy/master");
+const { WorkerController } = require("./proxy/worker");
 
 function loadRuntimeConfig(configPath) {
     const rawConfig = loadJsonFile(configPath);
@@ -23,7 +24,7 @@ function loadRuntimeConfig(configPath) {
 class StandaloneProxyApp {
     constructor(options) {
         this.configPath = options.configPath || path.resolve(process.cwd(), "config.json");
-        this.coinFactories = options.coinFactories || {};
+        this.coinsFactory = options.coinsFactory || createCoins;
         this.logger = options.logger || createLogger({ component: "xnp" });
         this.instanceId = options.instanceId || crypto.randomBytes(3);
         const initialConfig = options.config || loadRuntimeConfig(this.configPath);
@@ -34,13 +35,13 @@ class StandaloneProxyApp {
         const master = new MasterController({
             config,
             logger: this.logger.child("master"),
-            coinFactories: this.coinFactories,
+            coinsFactory: this.coinsFactory,
             instanceId: this.instanceId
         });
         const worker = new WorkerController({
             config,
             logger: this.logger.child("worker"),
-            coinFactories: this.coinFactories,
+            coinsFactory: this.coinsFactory,
             instanceId: this.instanceId,
             sendToMaster: (message) => master.handleWorkerMessage("standalone", message)
         });
@@ -96,7 +97,7 @@ function createStandaloneApp(rawConfig, options = {}) {
     return new StandaloneProxyApp({
         config,
         configPath,
-        coinFactories: options.coinFactories,
+        coinsFactory: options.coinsFactory,
         instanceId: options.instanceId,
         logger: options.logger
     });
@@ -106,7 +107,7 @@ class ClusterRuntimeManager {
     constructor(options) {
         this.config = options.config;
         this.configPath = options.configPath;
-        this.coinFactories = options.coinFactories || {};
+        this.coinsFactory = options.coinsFactory || createCoins;
         this.instanceId = options.instanceId;
         this.logger = createLogger({ component: "master" });
         this.workerCount = options.workerCount || os.cpus().length;
@@ -121,7 +122,7 @@ class ClusterRuntimeManager {
         return new MasterController({
             config,
             logger: this.logger,
-            coinFactories: this.coinFactories,
+            coinsFactory: this.coinsFactory,
             instanceId: this.instanceId
         });
     }
@@ -141,9 +142,6 @@ class ClusterRuntimeManager {
             XNP_CONFIG_PATH: this.configPath,
             XNP_INSTANCE_ID: this.instanceId.toString("hex")
         };
-        if (process.env.XNP_COIN_FACTORY_DIR) {
-            env.XNP_COIN_FACTORY_DIR = process.env.XNP_COIN_FACTORY_DIR;
-        }
 
         const worker = cluster.fork(env);
         this.attachWorker(worker);
@@ -250,12 +248,12 @@ function createMasterRuntime(options) {
 }
 
 function createWorkerRuntime(options) {
-    const { config, coinFactories, instanceId } = options;
+    const { config, coinsFactory, instanceId } = options;
     const logger = createLogger({ component: `worker.${cluster.worker?.id || 0}` });
     const worker = new WorkerController({
         config,
         logger,
-        coinFactories,
+        coinsFactory: coinsFactory || createCoins,
         instanceId,
         sendToMaster: (message) => {
             if (typeof process.send === "function") process.send(message);
@@ -298,16 +296,19 @@ function registerSignalHandlers({ stop, reload = null }) {
     }
 }
 
-async function main() {
-    const args = parseArgs(process.argv.slice(2));
-    const configPath = process.env.XNP_CONFIG_PATH || args.config;
-    const config = loadRuntimeConfig(configPath);
-    const instanceId = process.env.XNP_INSTANCE_ID
-        ? Buffer.from(process.env.XNP_INSTANCE_ID, "hex")
-        : crypto.randomBytes(3);
+async function main(options = {}) {
+    const args = parseArgs(options.argv || process.argv.slice(2));
+    const configPath = options.configPath || process.env.XNP_CONFIG_PATH || args.config;
+    const config = options.config || loadRuntimeConfig(configPath);
+    const instanceId = options.instanceId || (
+        process.env.XNP_INSTANCE_ID
+            ? Buffer.from(process.env.XNP_INSTANCE_ID, "hex")
+            : crypto.randomBytes(3)
+    );
+    const coinsFactory = options.coinsFactory || createCoins;
 
     if (args.standalone) {
-        const app = new StandaloneProxyApp({ config, configPath, instanceId });
+        const app = new StandaloneProxyApp({ config, configPath, instanceId, coinsFactory });
         app.start();
         registerSignalHandlers({
             reload: () => app.reload(),
@@ -325,7 +326,7 @@ async function main() {
             configPath,
             instanceId,
             workerCount: args.workers,
-            coinFactories: {}
+            coinsFactory
         });
         return;
     }
@@ -333,7 +334,7 @@ async function main() {
     createWorkerRuntime({
         config,
         instanceId,
-        coinFactories: {}
+        coinsFactory
     });
 }
 
@@ -349,5 +350,6 @@ module.exports = {
     PROXY_VERSION,
     StandaloneProxyApp,
     createStandaloneApp,
-    loadRuntimeConfig
+    loadRuntimeConfig,
+    main
 };
