@@ -1,6 +1,6 @@
 "use strict";
 
-const multiHashing = require("cryptonight-hashing");
+const powHash = require("node-powhash");
 
 const { bufferToBigIntLE } = require("./proxy-common");
 
@@ -82,7 +82,7 @@ function createXmrShareProcessor(options) {
             // so per-share CPU cost stays low; this layer is not a zero-trust public
             // pool edge that fully recomputes every share hash before acceptance.
             const resultBuffer = blobTypeGrin(blobTypeNum)
-                ? multiHashing.c29_cycle_hash(params.pow)
+                ? powHash.c29_cycle_hash(params.pow)
                 : Buffer.from(params.result, "hex");
             const hashDiff = hashBufferDiff(resultBuffer);
 

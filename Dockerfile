@@ -2,15 +2,19 @@ FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+WORKDIR /xmr-node-proxy
+
 RUN apt-get update \
-    && apt-get install -y ca-certificates git make g++ nodejs npm openssl pkg-config python3 libboost-dev libboost-system-dev libboost-date-time-dev libsodium-dev \
+    && apt-get install -y --no-install-recommends g++ git libboost-date-time-dev libsodium-dev make nodejs npm openssl python3 \
     && rm -rf /var/lib/apt/lists/*
 
-EXPOSE 8080 8443 3333
+COPY package.json ./
+RUN npm install --no-audit --no-fund --no-package-lock
 
-WORKDIR /xmr-node-proxy
-COPY . /xmr-node-proxy
-RUN npm install \
-    && cp --update=none config_example.json config.json \
+COPY . .
+RUN cp --update=none config_example.json config.json \
     && openssl req -subj "/C=IT/ST=Pool/L=Daemon/O=Mining Pool/CN=mining.proxy" -newkey rsa:2048 -nodes -keyout cert.key -x509 -out cert.pem -days 36500
+
+EXPOSE 1111 3333 8080 8081 8443
+
 CMD ["node", "proxy.js"]

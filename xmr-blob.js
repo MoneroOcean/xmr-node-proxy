@@ -1,6 +1,6 @@
 "use strict";
 
-const cnUtil = require("cryptoforknote-util");
+const blockTemplate = require("node-blocktemplate");
 
 function parseBlobType(blobTypeValue) {
     if (blobTypeValue === undefined || blobTypeValue === null) return 0;
@@ -70,12 +70,12 @@ function convertBlob(blobBuffer, blobTypeNum) {
         return Buffer.from(blobBuffer);
     }
     if (blobTypeRtm(blobTypeNum)) {
-        return cnUtil.convertRtmBlob(blobBuffer);
+        return blockTemplate.convertRtmBlob(blobBuffer);
     }
     if (blobTypeKcn(blobTypeNum)) {
-        return cnUtil.convertKcnBlob(blobBuffer);
+        return blockTemplate.convertKcnBlob(blobBuffer);
     }
-    return cnUtil.convert_blob(blobBuffer, blobTypeNum);
+    return blockTemplate.convert_blob(blobBuffer, blobTypeNum);
 }
 
 function constructNewBlob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring) {
@@ -86,12 +86,12 @@ function constructNewBlob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring) {
         return newBlob;
     }
     if (blobTypeRtm(blobTypeNum)) {
-        return cnUtil.constructNewRtmBlob(blockTemplateBuffer, nonceBuffer);
+        return blockTemplate.constructNewRtmBlob(blockTemplateBuffer, nonceBuffer);
     }
     if (blobTypeKcn(blobTypeNum)) {
-        return cnUtil.constructNewKcnBlob(blockTemplateBuffer, nonceBuffer);
+        return blockTemplate.constructNewKcnBlob(blockTemplateBuffer, nonceBuffer);
     }
-    return cnUtil.construct_block_blob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring);
+    return blockTemplate.construct_block_blob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring);
 }
 
 module.exports = {

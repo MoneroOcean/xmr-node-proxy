@@ -5,15 +5,15 @@
 Lean mining proxy for XMR-style pools.
 
 <p>
-  <img src="https://img.shields.io/badge/license-MIT-111111.svg" alt="MIT License">
-  <img src="https://img.shields.io/badge/node-18%20%7C%2020%20%7C%2022-111111.svg" alt="Node 18, 20, and 22">
-  <img src="https://img.shields.io/badge/runners-Ubuntu%2024.04%20%2B%20latest-111111.svg" alt="Ubuntu 24.04 and latest">
+  <img src="https://img.shields.io/badge/license-GPL--3.0--or--later-111111.svg" alt="GPL-3.0-or-later">
+  <img src="https://img.shields.io/badge/node-18%20%7C%2024%20%7C%20system-111111.svg" alt="Node 18, 24, and system">
+  <img src="https://img.shields.io/badge/runners-Ubuntu%20%2B%20macOS-111111.svg" alt="Ubuntu and macOS runners">
   <a href="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml"><img src="https://github.com/moneroocean/xmr-node-proxy/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 </div>
 
-It sits between miners and the upstream pool, keeps miner-facing difficulty local, fans out fresh jobs, balances miners across configured pools, and exposes a lightweight HTTP monitor.
+It sits between miners and the upstream pool, keeps miner-facing difficulty local, fans out fresh jobs, balances miners across configured pools, and exposes a lightweight HTTP monitor for MoneroOcean-style XMR-family deployments.
 
 The current runtime is built for modern Node.js, keeps `proxy.js` as the entry point, and ships with a standalone test harness so changes can be verified without a live pool.
 
@@ -89,6 +89,92 @@ Config reload:
 
 - Send `SIGHUP` to the running proxy to reload `config.json` in place
 - In `pm2`, use `pm2 sendSignal SIGHUP xnp`
+
+## Which Install Method To Use
+
+Three reasonable ways to run the proxy are supported here.
+
+Manual local install:
+
+- best if you want the clearest view of what is installed and how the proxy runs
+- easiest path for development, debugging, and local edits
+- downside: you install system packages and Node dependencies yourself
+
+`install.sh`:
+
+- best if you want a quick local setup on Ubuntu without typing each install step yourself
+- it sets up packages, local npm dependencies, default config, and self-signed certs
+- downside: it is Ubuntu/apt-oriented and still installs software directly onto the host machine
+
+Docker:
+
+- best if you want isolation from the host and a repeatable container image
+- keeps the runtime inside the container instead of mixing files into the host system
+- downside: you still need to understand volume mounts for `config.json` and optional cert files, so it is not always the simplest first path for a beginner
+
+For most beginners:
+
+- use manual local install if you want to learn the moving parts
+- use `install.sh` if you are on Ubuntu and want the fastest host install
+- use Docker if you already know basic container workflows or want cleaner isolation
+
+## install.sh
+
+For an apt-based local install from a repo checkout:
+
+```bash
+bash install.sh
+```
+
+What it does:
+
+- installs the required Ubuntu packages with `apt-get`
+- runs local `npm install`
+- creates `config.json` from `config_example.json` if needed
+- generates `cert.key` and `cert.pem` if they do not exist
+
+Requirements:
+
+- run it from an `xmr-node-proxy` checkout
+- Ubuntu 26.04 or another apt-based Linux with equivalent package names
+- either `root` or a normal user with `sudo`
+
+After it completes:
+
+```bash
+node proxy.js --config /path/to/xmr-node-proxy/config.json
+```
+
+## Docker
+
+Build the image from the repo root:
+
+```bash
+docker build -t xmr-node-proxy .
+```
+
+Run it with a local config mounted into the container workdir:
+
+- this example assumes your mounted `config.json` listens on `3333` and enables the HTTP monitor on `8081`
+- adjust `-p` mappings to match your actual `listeningPorts[]` and `httpPort`
+- the bundled `config_example.json` defaults to `httpEnable: false`, so turn that on first if you want the monitor on `8081`
+
+```bash
+docker run --rm -it -p 3333:3333 -p 8081:8081 -v "$PWD/config.json:/xmr-node-proxy/config.json:ro" xmr-node-proxy
+```
+
+If your config uses TLS listener files from the repo root, mount those too:
+
+```bash
+docker run --rm -it -p 3333:3333 -p 8443:8443 -p 8081:8081 -v "$PWD/config.json:/xmr-node-proxy/config.json:ro" -v "$PWD/cert.key:/xmr-node-proxy/cert.key:ro" -v "$PWD/cert.pem:/xmr-node-proxy/cert.pem:ro" xmr-node-proxy
+```
+
+Dockerfile notes:
+
+- it installs native build dependencies, then runs `npm install`
+- `COPY package.json ./` before `npm install` keeps the dependency layer cacheable
+- `COPY . .` then copies the rest of the repo into `/xmr-node-proxy`
+- the image creates a default `config.json` and self-signed cert pair at build time, but mounting your own config and certs is the more practical operator path
 
 ## Minimal Config Example
 
@@ -325,8 +411,7 @@ Miners submit low-diff shares constantly
 Typical local loop:
 
 ```bash
-npm test
-node proxy.js --standalone
+npm test && node proxy.js --standalone
 ```
 
 The standalone runtime exists specifically so protocol and compatibility work can be tested without relying on a live upstream pool during normal development.

@@ -1,54 +1,70 @@
-name: CI
+name: Stability
 
 on:
-  push:
   pull_request:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: stability-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test-supported-node:
-    name: Test (Node ${{ matrix.node-version }} on Ubuntu 24.04)
-    runs-on: ubuntu-24.04
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        node-version: [18, 20, 22]
+        include:
+          - os: ubuntu-24.04
+            node: 18
+          - os: ubuntu-24.04
+            node: 24
+          - os: ubuntu-latest
+            node: system
+          - os: ubuntu-latest
+            node: 24
+          - os: macos-latest
+            node: system
+          - os: macos-latest
+            node: 24
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        if: matrix.node != 'system'
+        uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run test suite
-        run: npm test
-
-  test-default-runner-node:
-    name: Test (default Node on ${{ matrix.runs-on }})
-    runs-on: ${{ matrix.runs-on }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # GitHub does not currently publish an ubuntu-26.04 hosted Linux label.
-        runs-on: [ubuntu-24.04, ubuntu-latest]
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Show default Node.js
+      - name: Install Linux build dependencies
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
-          node --version
-          npm --version
+          sudo apt-get update
+          sudo apt-get install -y libboost-date-time-dev libsodium-dev
+
+      - name: Install macOS build dependencies
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          brew install boost libsodium
+          echo "CPATH=$(brew --prefix boost)/include:$(brew --prefix libsodium)/include" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$(brew --prefix boost)/lib:$(brew --prefix libsodium)/lib" >> "$GITHUB_ENV"
+
+      - name: Show Node.js version
+        run: node -v
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund --no-package-lock
 
-      - name: Run test suite
+      - name: Run fast stability suite
         run: npm test

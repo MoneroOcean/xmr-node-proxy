@@ -1,17 +1,17 @@
 "use strict";
 
-const multiHashing = require("cryptonight-hashing");
+const powHash = require("node-powhash");
 
 const { DEFAULT_ALGO } = require("./proxy-common");
 
 function randomxHasher(variant) {
-    return (convertedBlob, blockTemplate) => multiHashing.randomx(convertedBlob, Buffer.from(blockTemplate.seed_hash, "hex"), variant);
+    return (convertedBlob, blockTemplate) => powHash.randomx(convertedBlob, Buffer.from(blockTemplate.seed_hash, "hex"), variant);
 }
 
 function cryptonightHasher(variant, useHeight = false) {
     return (convertedBlob, blockTemplate) => useHeight
-        ? multiHashing.cryptonight(convertedBlob, variant, blockTemplate.height)
-        : multiHashing.cryptonight(convertedBlob, variant);
+        ? powHash.cryptonight(convertedBlob, variant, blockTemplate.height)
+        : powHash.cryptonight(convertedBlob, variant);
 }
 
 function fixedHasher(handler) {
@@ -44,12 +44,12 @@ registerHash(["cn/ccx", "cryptonight/ccx"], cryptonightHasher(17));
 registerHash(["cn/double", "cryptonight/double"], cryptonightHasher(16));
 registerHash(["ghostrider"], cryptonightHasher(18));
 registerHash(["flex"], cryptonightHasher(19));
-registerHash(["cn-lite", "cryptonight-lite", "cn-lite/0", "cryptonight-lite/0"], fixedHasher((convertedBlob) => multiHashing.cryptonight_light(convertedBlob, 0)));
-registerHash(["cn-lite/1", "cryptonight-lite/1"], fixedHasher((convertedBlob) => multiHashing.cryptonight_light(convertedBlob, 1)));
-registerHash(["cn-heavy", "cryptonight-heavy", "cn-heavy/0", "cryptonight-heavy/0"], fixedHasher((convertedBlob) => multiHashing.cryptonight_heavy(convertedBlob, 0)));
-registerHash(["cn-heavy/xhv", "cryptonight-heavy/xhv"], fixedHasher((convertedBlob) => multiHashing.cryptonight_heavy(convertedBlob, 1)));
-registerHash(["cn-heavy/tube", "cryptonight-heavy/tube"], fixedHasher((convertedBlob) => multiHashing.cryptonight_heavy(convertedBlob, 2)));
-registerHash(["cn-pico/trtl", "cryptonight-pico/trtl"], fixedHasher((convertedBlob) => multiHashing.cryptonight_pico(convertedBlob, 0)));
+registerHash(["cn-lite", "cryptonight-lite", "cn-lite/0", "cryptonight-lite/0"], fixedHasher((convertedBlob) => powHash.cryptonight_light(convertedBlob, 0)));
+registerHash(["cn-lite/1", "cryptonight-lite/1"], fixedHasher((convertedBlob) => powHash.cryptonight_light(convertedBlob, 1)));
+registerHash(["cn-heavy", "cryptonight-heavy", "cn-heavy/0", "cryptonight-heavy/0"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 0)));
+registerHash(["cn-heavy/xhv", "cryptonight-heavy/xhv"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 1)));
+registerHash(["cn-heavy/tube", "cryptonight-heavy/tube"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 2)));
+registerHash(["cn-pico/trtl", "cryptonight-pico/trtl"], fixedHasher((convertedBlob) => powHash.cryptonight_pico(convertedBlob, 0)));
 registerHash(["rx/wow", "randomx/wow"], randomxHasher(17));
 registerHash(["rx/loki", "randomx/loki"], randomxHasher(18));
 registerHash(["rx/v"], randomxHasher(19));
@@ -58,16 +58,16 @@ registerHash(["rx/xeq"], randomxHasher(22));
 registerHash(["defyx"], randomxHasher(1));
 registerHash(["panthera"], randomxHasher(3));
 registerHash(["rx/arq"], randomxHasher(2));
-registerHash(["argon2/chukwav2", "chukwav2"], fixedHasher((convertedBlob) => multiHashing.argon2(convertedBlob, 2)));
-registerHash(["argon2/wrkz"], fixedHasher((convertedBlob) => multiHashing.argon2(convertedBlob, 1)));
-registerHash(["k12"], fixedHasher((convertedBlob) => multiHashing.k12(convertedBlob)));
-registerHash(["astrobwt"], fixedHasher((convertedBlob) => multiHashing.astrobwt(convertedBlob, 0)));
+registerHash(["argon2/chukwav2", "chukwav2"], fixedHasher((convertedBlob) => powHash.argon2(convertedBlob, 2)));
+registerHash(["argon2/wrkz"], fixedHasher((convertedBlob) => powHash.argon2(convertedBlob, 1)));
+registerHash(["k12"], fixedHasher((convertedBlob) => powHash.k12(convertedBlob)));
+registerHash(["astrobwt"], fixedHasher((convertedBlob) => powHash.astrobwt(convertedBlob, 0)));
 
 const C29_HASHERS = {
-    c29s: (header, ring) => multiHashing.c29s(header, ring),
-    c29v: (header, ring) => multiHashing.c29v(header, ring),
-    c29b: (header, ring) => multiHashing.c29b(header, ring),
-    c29i: (header, ring) => multiHashing.c29i(header, ring)
+    c29s: (header, ring) => powHash.c29s(header, ring),
+    c29v: (header, ring) => powHash.c29v(header, ring),
+    c29b: (header, ring) => powHash.c29b(header, ring),
+    c29i: (header, ring) => powHash.c29i(header, ring)
 };
 
 function createXmrAlgoTools({ logger = null } = {}) {
