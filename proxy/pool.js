@@ -28,6 +28,7 @@ class UpstreamPoolClient {
         this.keepAlive = this.poolConfig.keepAlive !== false;
         this.devPool = this.poolConfig.devPool === true;
         this.blobType = this.poolConfig.blob_type;
+        this.algoMinTime = this.poolConfig.algo_min_time;
         this.defaultAlgoSet = Object.fromEntries(this.poolConfig.algo.map((algo) => [algo, 1]));
         this.defaultAlgosPerf = { ...this.poolConfig.algo_perf };
         this.algos = { ...this.defaultAlgoSet };
@@ -192,9 +193,17 @@ class UpstreamPoolClient {
             login: this.username,
             pass: this.password,
             agent: `xmr-node-proxy/${PROXY_VERSION}`,
+            ...this.currentAlgoParams()
+        });
+    }
+
+    currentAlgoParams() {
+        const params = {
             algo: Object.keys(this.algos),
             "algo-perf": this.algosPerf
-        });
+        };
+        if (this.algoMinTime !== undefined) params["algo-min-time"] = this.algoMinTime;
+        return params;
     }
 
     updateAlgoPerf(algos, algosPerf) {
@@ -212,16 +221,14 @@ class UpstreamPoolClient {
             this.logger.info("pool.algos", {
                 host: this.hostname,
                 algos: Object.keys(this.algos).join(","),
-                perf: Object.entries(this.algosPerf).map(([algo, value]) => `${algo}:${value}`).join(",")
+                perf: Object.entries(this.algosPerf).map(([algo, value]) => `${algo}:${value}`).join(","),
+                algoMinTime: this.algoMinTime
             });
             this.lastCommonAlgoNotifyTime = now;
         }
 
         if (this.connected) {
-            this.sendData("getjob", {
-                algo: Object.keys(this.algos),
-                "algo-perf": this.algosPerf
-            });
+            this.sendData("getjob", this.currentAlgoParams());
         }
     }
 

@@ -139,6 +139,7 @@ class MasterController {
             pool.enabled = true;
             this.logger.info("pool.job", {
                 host: pool.hostname,
+                coin: pool.activeBlockTemplate.coin,
                 height: pool.activeBlockTemplate.height,
                 algo: pool.activeBlockTemplate.algo,
                 target: pool.activeBlockTemplate.targetDiff,

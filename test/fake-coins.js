@@ -9,6 +9,7 @@ function createFakeCoins() {
             this.blob = template.blocktemplate_blob;
             this.blocktemplate_blob = template.blocktemplate_blob;
             this.blob_type = template.blob_type ?? 0;
+            this.coin = template.coin;
             this.variant = template.variant;
             this.algo = template.algo || "test/algo";
             this.difficulty = template.difficulty;
@@ -33,6 +34,7 @@ function createFakeCoins() {
             this.blob = template.blocktemplate_blob;
             this.blocktemplate_blob = template.blocktemplate_blob;
             this.blob_type = template.blob_type ?? 0;
+            this.coin = template.coin;
             this.variant = template.variant;
             this.algo = template.algo || "test/algo";
             this.difficulty = template.difficulty;
@@ -98,6 +100,7 @@ function createFakeCoins() {
             id: randomId(),
             blocktemplate_blob: activeBlockTemplate.blobForWorker(),
             blob_type: activeBlockTemplate.blob_type,
+            coin: activeBlockTemplate.coin,
             variant: activeBlockTemplate.variant,
             algo: activeBlockTemplate.algo,
             difficulty: activeBlockTemplate.difficulty,

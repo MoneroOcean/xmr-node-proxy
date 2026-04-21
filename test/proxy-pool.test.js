@@ -232,6 +232,45 @@ test("UpstreamPoolClient advertises algo and algo-perf during login for MO-style
     }
 });
 
+test("UpstreamPoolClient forwards configured algo-min-time on login and getjob", async () => {
+    let loginRequest = null;
+    let getjobRequest = null;
+    const server = net.createServer((socket) => {
+        attachJsonHandler(socket, (message) => {
+            if (message.method === "login") {
+                loginRequest = message;
+                socket.write(`${JSON.stringify({
+                    id: message.id,
+                    error: null,
+                    result: { id: "session-ready", job: { job_id: "job-ready", target_diff: 10000 } }
+                })}\n`);
+                return;
+            }
+            if (message.method === "getjob") {
+                getjobRequest = message;
+                socket.write(`${JSON.stringify({ id: message.id, error: null, result: null })}\n`);
+            }
+        });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const { client } = createClient(server.address().port, { algo_min_time: 1 });
+    try {
+        client.start();
+        await waitFor(() => loginRequest !== null);
+        client.updateAlgoPerf({ "rx/arq": 1 }, { "rx/arq": 2 });
+        await waitFor(() => getjobRequest !== null);
+        assert.equal(loginRequest.params["algo-min-time"], 1);
+        assert.equal(getjobRequest.params["algo-min-time"], 1);
+        assert.deepEqual(getjobRequest.params.algo, ["rx/arq"]);
+        assert.deepEqual(getjobRequest.params["algo-perf"], { "rx/arq": 2 });
+    } finally {
+        client.stop();
+        await new Promise((resolve) => server.close(resolve));
+    }
+});
+
 test("UpstreamPoolClient accepts self-signed TLS pools and treats keepalived replies as normal acks", async () => {
     let keepaliveRequests = 0;
     const server = tls.createServer({ key: TLS_KEY, cert: TLS_CERT }, (socket) => {

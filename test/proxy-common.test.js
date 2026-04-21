@@ -113,6 +113,20 @@ test("normalizeConfig applies flat difficultySettings", () => {
     });
 });
 
+test("normalizeConfig accepts pool algo-min-time and normalizes it to algo_min_time", () => {
+    const config = normalizeConfig({
+        pools: [
+            { hostname: "pool.example.com", port: 3333, default: true, "algo-min-time": 1 }
+        ],
+        listeningPorts: [
+            { port: 4444, diff: 100 }
+        ]
+    }, path.join(os.tmpdir(), "config.json"));
+
+    assert.equal(config.pools[0].algo_min_time, 1);
+    assert.equal("algo-min-time" in config.pools[0], false);
+});
+
 test("normalizeConfig rejects legacy coinSettings with an upgrade message", () => {
     assert.throws(() => normalizeConfig({
         pools: [

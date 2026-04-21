@@ -33,6 +33,51 @@ function createTemplate(options = {}) {
     };
 }
 
+function formatLogValue(value) {
+    if (typeof value === "undefined") return "";
+    if (value === null) return "null";
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (typeof value === "string") {
+        return /^[a-zA-Z0-9._/:,+-]+$/.test(value) ? value : JSON.stringify(value);
+    }
+    return JSON.stringify(value);
+}
+
+function formatLogMeta(meta) {
+    if (!meta || typeof meta !== "object") return "";
+    return Object.entries(meta)
+        .filter(([, value]) => typeof value !== "undefined")
+        .map(([key, value]) => `${key}=${formatLogValue(value)}`)
+        .join(" ");
+}
+
+function createBufferedLogger(component = "xnp", lines = []) {
+    function write(level, message, meta, namespace = "") {
+        const prefix = namespace ? `${namespace} ${message}` : message;
+        const metaText = formatLogMeta(meta);
+        lines.push([level, component, prefix, metaText].filter(Boolean).join(" "));
+    }
+
+    return {
+        lines,
+        info(message, meta) {
+            write("INF", message, meta);
+        },
+        warn(message, meta) {
+            write("WRN", message, meta);
+        },
+        error(message, meta) {
+            write("ERR", message, meta);
+        },
+        debug(namespace, message, meta) {
+            write("DBG", message, meta, namespace);
+        },
+        child(childComponent) {
+            return createBufferedLogger(childComponent || component, lines);
+        }
+    };
+}
+
 class FakePool {
     constructor(template, options = {}) {
         this.template = template;
@@ -317,9 +362,11 @@ async function startHarness(options = {}) {
         });
     }
 
+    const logger = options.logger || createBufferedLogger("xnp");
     const app = createStandaloneApp(config, {
         configPath: path.join(tempDir, "config.json"),
-        coinsFactory: createFakeCoins
+        coinsFactory: createFakeCoins,
+        logger
     });
     app.start();
 
@@ -345,6 +392,10 @@ async function startHarness(options = {}) {
         primaryPool,
         tempDir,
         waitFor,
+        loggerLines: logger.lines || [],
+        getLogOutput() {
+            return (logger.lines || []).join("\n");
+        },
         async stop() {
             await app.stop();
             if (backupPool) await backupPool.stop();

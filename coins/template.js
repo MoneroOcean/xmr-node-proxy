@@ -48,6 +48,7 @@ function createTemplateTools(options = {}) {
             this.blob = template.blocktemplate_blob;
             this.blocktemplate_blob = template.blocktemplate_blob;
             this.blob_type = parseBlobType(template.blob_type);
+            this.coin = template.coin;
             this.variant = template.variant;
             this.algo = template.algo;
             this.difficulty = normalizeDifficulty(template.difficulty);
@@ -87,6 +88,7 @@ function createTemplateTools(options = {}) {
             this.blob = template.blocktemplate_blob;
             this.blocktemplate_blob = template.blocktemplate_blob;
             this.blob_type = parseBlobType(template.blob_type);
+            this.coin = template.coin;
             this.variant = template.variant;
             this.algo = template.algo;
             this.difficulty = normalizeDifficulty(template.difficulty);
@@ -201,6 +203,7 @@ function createTemplateTools(options = {}) {
             id: randomId(),
             blocktemplate_blob: workerBlob,
             blob_type: activeBlockTemplate.blob_type,
+            coin: activeBlockTemplate.coin,
             variant: activeBlockTemplate.variant,
             algo: activeBlockTemplate.algo,
             difficulty: activeBlockTemplate.difficulty,

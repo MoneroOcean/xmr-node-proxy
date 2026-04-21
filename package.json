@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node proxy.js",
     "start:standalone": "node proxy.js --standalone",
-    "test": "node --test test/*.test.js"
+    "test": "node --require ./test/test_output_buffer.js --test --test-reporter=spec --test-concurrency=1 test/*.test.js",
+    "test:live": "node --require ./test/test_output_buffer.js --test --test-reporter=spec --test-concurrency=1 test/live.js"
   },
   "repository": {
     "type": "git",

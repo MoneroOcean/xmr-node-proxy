@@ -205,6 +205,7 @@ For a single MoneroOcean upstream over TLS:
       "keepAlive": true,
       "algo": ["rx/0"],
       "algo_perf": { "rx/0": 1 },
+      "algo-min-time": 60,
       "blob_type": "cryptonote",
       "default": true
     }
@@ -232,6 +233,7 @@ MoneroOcean note:
 
 - TLS port `20001` currently requires `ssl: true` and `allowSelfSignedSSL: true`
 - If your miner provides a real MoneroOcean `algo-perf` map, pass it through so pool-side algo selection stays accurate
+- `algo-min-time` is optional; `0` still maps to the upstream pool's default stickiness window on `nodejs-pool`, which is effectively `60`
 
 ## Runtime
 
@@ -287,7 +289,7 @@ Important fields:
 - `pools[]`: upstream pools
 - `pools[].share`: target balancing weight among active non-dev pools; `0` means backup-only
 - `pools[].default`: choose the default pool; if older configs mark more than one, the last one wins
-- `pools[].algo` and `pools[].algo_perf`: upstream algo declaration for pools such as MoneroOcean
+- `pools[].algo`, `pools[].algo_perf`, and optional `pools[].algo-min-time`: upstream algo declaration for pools such as MoneroOcean
 - `listeningPorts[]`: miner-facing ports and their starting difficulty
 - `difficultySettings`: local vardiff bounds shared across miner-facing ports
 - `accessControl`: optional wallet/password allowlist that reloads from disk

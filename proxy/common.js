@@ -228,12 +228,12 @@ function resolvePath(baseDir, value) {
 }
 
 function normalizePoolConfig(poolConfig) {
-    const algo = poolConfig.algo
-        ? (Array.isArray(poolConfig.algo) ? poolConfig.algo : [poolConfig.algo])
-        : DEFAULT_ALGO;
+    const { ["algo-min-time"]: _ignored, ...remainingPoolConfig } = poolConfig;
+    const algo = Array.isArray(poolConfig.algo) ? poolConfig.algo : (poolConfig.algo ? [poolConfig.algo] : DEFAULT_ALGO);
+    const rawAlgoMinTime = poolConfig.algo_min_time ?? poolConfig["algo-min-time"];
 
     return {
-        ...poolConfig,
+        ...remainingPoolConfig,
         keepAlive: poolConfig.keepAlive !== false,
         allowSelfSignedSSL: poolConfig.allowSelfSignedSSL === true,
         default: poolConfig.default === true,
@@ -242,7 +242,8 @@ function normalizePoolConfig(poolConfig) {
         algo_perf: poolConfig.algo_perf && typeof poolConfig.algo_perf === "object"
             ? poolConfig.algo_perf
             : DEFAULT_ALGO_PERF,
-        blob_type: poolConfig.blob_type || "cryptonote"
+        blob_type: poolConfig.blob_type || "cryptonote",
+        algo_min_time: rawAlgoMinTime === undefined ? undefined : Number(rawAlgoMinTime)
     };
 }
 
@@ -331,6 +332,9 @@ function validateConfig(config) {
     for (const pool of config.pools) {
         if (!pool.hostname || !Number.isInteger(Number(pool.port))) {
             throw new Error(`Invalid pool entry: ${JSON.stringify(pool)}`);
+        }
+        if (pool.algo_min_time !== undefined && (!Number.isFinite(pool.algo_min_time) || pool.algo_min_time < 0)) {
+            throw new Error(`Invalid pool algo-min-time: ${JSON.stringify(pool)}`);
         }
         if (pool.default && !pool.devPool) hasDefaultPool = true;
     }
