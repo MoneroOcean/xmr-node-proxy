@@ -256,6 +256,8 @@ pm2 save
 
 PM2 best practice:
 
+- `install.sh` does not install PM2 for you.
+- Prefer installing PM2 from your distro package manager or from a user-owned Node toolchain instead of using a system-wide `npm install -g`.
 - Do not add `--log-date-format` here. The proxy already timestamps every log line, so PM2-side timestamps only duplicate output.
 - `pm2 logs xnp` and `pm2 monit` work well with the new structured log format.
 - `pm2-logrotate` is still a good companion for long-running nodes.
