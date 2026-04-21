@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { once } = require("node:events");
 
-const { createStandaloneApp } = require("../proxy");
+const { createStandaloneApp } = require("../../proxy");
 const createFakeCoins = require("./fake-coins");
 
 function createTemplate(options = {}) {

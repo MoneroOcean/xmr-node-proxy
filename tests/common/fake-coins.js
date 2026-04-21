@@ -1,6 +1,6 @@
 "use strict";
 
-const { CircularBuffer, randomId } = require("../proxy/common");
+const { CircularBuffer, randomId } = require("../../proxy/common");
 
 function createFakeCoins() {
     class WorkerBlockTemplate {

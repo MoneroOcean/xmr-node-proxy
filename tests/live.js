@@ -773,40 +773,42 @@ const liveFailureState = {
     printed: false
 };
 
-test.after(() => {
-    if (!liveFailureState.details.length || liveFailureState.printed) return;
-    process.stdout.write(`\nLive failure logs\n${formatFailureDetails(liveFailureState.details)}\n`);
-    liveFailureState.printed = true;
-});
+test.describe("xmr-node-proxy live miner integration suite", { concurrency: false }, () => {
+    test.after(() => {
+        if (!liveFailureState.details.length || liveFailureState.printed) return;
+        process.stdout.write(`\nLive failure logs\n${formatFailureDetails(liveFailureState.details)}\n`);
+        liveFailureState.printed = true;
+    });
 
-test("Live gulf.moneroocean.stream proxy testing", { timeout: 60 * 60 * 1000 }, async (t) => {
-    let context = null;
-    let keepArtifacts = process.env.XNP_LIVE_KEEP_ARTIFACTS === "1";
+    test("Live gulf.moneroocean.stream proxy testing", { timeout: 60 * 60 * 1000 }, async (t) => {
+        let context = null;
+        let keepArtifacts = process.env.XNP_LIVE_KEEP_ARTIFACTS === "1";
 
-    try {
-        context = await buildLiveContext();
-        for (const scenario of context.scenarios) {
-            let scenarioFailed = false;
-            await t.test(`${scenario.algo} via ${scenario.coin}`, { timeout: context.timeoutMs + context.switchDelayMs + 60_000 }, async () => {
-                try {
-                    await runScenario(context, scenario);
-                } catch (error) {
-                    scenarioFailed = true;
-                    keepArtifacts = true;
-                    if (error.liveFailureDetails) {
-                        liveFailureState.details.push(error.liveFailureDetails);
+        try {
+            context = await buildLiveContext();
+            for (const scenario of context.scenarios) {
+                let scenarioFailed = false;
+                await t.test(`${scenario.algo} via ${scenario.coin}`, { timeout: context.timeoutMs + context.switchDelayMs + 60_000 }, async () => {
+                    try {
+                        await runScenario(context, scenario);
+                    } catch (error) {
+                        scenarioFailed = true;
+                        keepArtifacts = true;
+                        if (error.liveFailureDetails) {
+                            liveFailureState.details.push(error.liveFailureDetails);
+                        }
+                        error.message = withArtifactPaths(error.message, context, error.liveFailureDetails);
+                        throw error;
                     }
-                    error.message = withArtifactPaths(error.message, context, error.liveFailureDetails);
-                    throw error;
-                }
-            }).catch(() => {});
-            if (scenarioFailed) break;
+                }).catch(() => {});
+                if (scenarioFailed) break;
+            }
+        } catch (error) {
+            keepArtifacts = true;
+            error.message = withArtifactPaths(error.message, context);
+            throw error;
+        } finally {
+            await cleanupContext(context, keepArtifacts);
         }
-    } catch (error) {
-        keepArtifacts = true;
-        error.message = withArtifactPaths(error.message, context);
-        throw error;
-    } finally {
-        await cleanupContext(context, keepArtifacts);
-    }
+    });
 });

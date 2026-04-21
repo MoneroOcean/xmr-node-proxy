@@ -14,7 +14,7 @@ const {
     JsonLineClient,
     createTemplate,
     waitFor
-} = require("./harness");
+} = require("./common/harness");
 
 async function getFreePort() {
     const server = net.createServer();
@@ -122,7 +122,7 @@ function createClusterConfig({ minerPort, primaryPoolPort, listeningDiff }) {
 
 function spawnClusterProxy({ configPath }) {
     const lines = [];
-    const child = cp.spawn(process.execPath, ["test/cluster-proxy-bootstrap.js", "--workers", "1", "--config", configPath], {
+    const child = cp.spawn(process.execPath, ["tests/common/cluster-proxy-bootstrap.js", "--workers", "1", "--config", configPath], {
         cwd: path.resolve(__dirname, ".."),
         env: {
             ...process.env,

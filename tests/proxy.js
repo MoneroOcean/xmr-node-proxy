@@ -8,7 +8,7 @@ const {
     JsonLineClient,
     createTemplate,
     startHarness
-} = require("./harness");
+} = require("./common/harness");
 
 function encodeDiff(value) {
     return value.toString(16);

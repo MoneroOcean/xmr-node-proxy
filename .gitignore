@@ -5,5 +5,7 @@ cert*
 config.json
 .DS_Store
 .codex
+.cache/live-miners
+test-artifacts/
 *~
 *.un~

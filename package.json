@@ -9,8 +9,8 @@
   "scripts": {
     "start": "node proxy.js",
     "start:standalone": "node proxy.js --standalone",
-    "test": "node --require ./test/test_output_buffer.js --test --test-reporter=spec --test-concurrency=1 test/*.test.js",
-    "test:live": "node --require ./test/test_output_buffer.js --test --test-reporter=spec --test-concurrency=1 test/live.js"
+    "test": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/balance.js tests/cluster.js tests/common.js tests/monitor.js tests/pool.js tests/proxy.js tests/xmr.js",
+    "test:live": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/live.js"
   },
   "repository": {
     "type": "git",

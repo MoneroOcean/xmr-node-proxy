@@ -1,6 +1,6 @@
 "use strict";
 
-const proxy = require("../proxy");
+const proxy = require("../../proxy");
 const createFakeCoins = require("./fake-coins");
 
 proxy.main({
