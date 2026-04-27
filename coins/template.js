@@ -7,13 +7,10 @@ function normalizeDifficulty(value, fallback = 1) {
     // such as target_diff. Normalize once here so the rest of the coins logic can
     // safely use integer math and BigInt conversions.
     const numericValue = Number(value);
-    if (isPositiveFinite(numericValue)) return Math.max(1, Math.floor(numericValue));
+    if (Number.isFinite(numericValue) && numericValue > 0) return Math.max(1, Math.floor(numericValue));
     const fallbackValue = Number(fallback);
-    if (isPositiveFinite(fallbackValue)) return Math.max(1, Math.floor(fallbackValue));
+    if (Number.isFinite(fallbackValue) && fallbackValue > 0) return Math.max(1, Math.floor(fallbackValue));
     return 1;
-}
-function isPositiveFinite(value) {
-    return Number.isFinite(value) && value > 0;
 }
 function getTargetHex(difficulty, size) {
     const diff = BigInt(normalizeDifficulty(difficulty));
@@ -127,9 +124,6 @@ function createTemplateTools(options = {}) {
     function canReuseJob(miner, activeBlockTemplate, bypassCache) {
         if (miner.validJobs.size() <= 0) return false;
         if (miner.validJobs.get(0).templateID !== activeBlockTemplate.id) return false;
-        return canReuseCachedJob(miner, bypassCache);
-    }
-    function canReuseCachedJob(miner, bypassCache) {
         return !miner.newDiff && miner.cachedJob !== null && bypassCache !== true;
     }
     function createJobRecord(miner, activeBlockTemplate) {

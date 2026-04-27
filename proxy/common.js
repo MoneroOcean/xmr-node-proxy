@@ -120,7 +120,7 @@ function formatLogMeta(meta) {
         .join(" ");
 }
 function envFlagEnabled(rawValue, defaultValue = true) {
-    if (isBlank(rawValue)) return defaultValue;
+    if (rawValue == null || rawValue === "") return defaultValue;
     const normalized = String(rawValue).trim().toLowerCase();
     if (FALSE_FLAGS.has(normalized)) return false;
     if (TRUE_FLAGS.has(normalized)) return true;
@@ -322,7 +322,7 @@ function normalizeGeneralConfig(rawConfig) {
         ...normalizeRuntimeConfig(rawConfig),
         developerShare: Number(rawConfig.developerShare ?? 0),
         addressWorkerID: rawConfig.addressWorkerID === true,
-        keepOfflineMiners: isEnabledNumber(rawConfig.keepOfflineMiners)
+        keepOfflineMiners: rawConfig.keepOfflineMiners === true || Number(rawConfig.keepOfflineMiners || 0) > 0
     };
 }
 function normalizeHttpConfig(rawConfig) {
@@ -331,22 +331,16 @@ function normalizeHttpConfig(rawConfig) {
         httpAddress: rawConfig.httpAddress || "127.0.0.1",
         httpPort: Number(rawConfig.httpPort ?? 8081),
         refreshTime: Number(rawConfig.refreshTime ?? 30),
-        theme: normalizeTheme(rawConfig.theme)
+        theme: rawConfig.theme || "light"
     };
-}
-function normalizeTheme(theme) {
-    return theme || "light";
 }
 function normalizeRuntimeConfig(rawConfig) {
     return {
-        bindAddress: normalizeBindAddress(rawConfig.bindAddress),
+        bindAddress: rawConfig.bindAddress || "0.0.0.0",
         minerInactivityTime: Number(rawConfig.minerInactivityTime ?? 120),
         socketTimeoutMs: Number(rawConfig.socketTimeoutMs ?? 180000),
         maxJsonLineBytes: Number(rawConfig.maxJsonLineBytes ?? MAX_JSON_LINE_BYTES)
     };
-}
-function normalizeBindAddress(bindAddress) {
-    return bindAddress || "0.0.0.0";
 }
 function validateConfig(config) {
     validateRequiredList(config.pools, "config.pools must contain at least one pool");
@@ -377,7 +371,7 @@ function validatePool(pool) {
 }
 function invalidAlgoMinTime(pool) {
     if (pool.algo_min_time === undefined) return false;
-    return invalidNonNegativeNumber(pool.algo_min_time);
+    return !Number.isFinite(pool.algo_min_time) || pool.algo_min_time < 0;
 }
 function validateDifficultySettings(settings) {
     if (!validDifficultySettings(settings)) {
@@ -557,15 +551,6 @@ function flushJsonLines(buffer, onLine) {
 }
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-function isBlank(value) {
-    return value === undefined || value === null || value === "";
-}
-function isEnabledNumber(value) {
-    return value === true || Number(value || 0) > 0;
-}
-function invalidNonNegativeNumber(value) {
-    return !Number.isFinite(value) || value < 0;
 }
 function respondToHttpProbe(socket, line) {
     if (!line.startsWith("GET /")) return false;

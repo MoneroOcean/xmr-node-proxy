@@ -20,13 +20,11 @@ function collectWorkerStats({ workers, pools, inactivityDeadline, logger }) {
     return { globalStats, hashrateAlgo };
 }
 function dropStaleMiner(workerState, minerId, workerData, inactivityDeadline) {
-    if (!workerData) return deleteMinerStat(workerState, minerId);
-    if (workerData.lastContact < inactivityDeadline) return deleteMinerStat(workerState, minerId);
+    if (!workerData || workerData.lastContact < inactivityDeadline) {
+        workerState.stats.delete(minerId);
+        return true;
+    }
     return false;
-}
-function deleteMinerStat(workerState, minerId) {
-    workerState.stats.delete(minerId);
-    return true;
 }
 function addMinerStats(stats, workerData) {
     stats.miners += 1;
@@ -85,7 +83,7 @@ function compatibleHashrateAlgo(current, algo) {
     return "h/s";
 }
 function createSummaryState({ globalStats, pools, isPoolUsable, hashrateAlgo, lastSummaryKey, lastSummaryLogAt, now = Date.now() }) {
-    const averageDiff = averageMinerDiff(globalStats);
+    const averageDiff = globalStats.miners > 0 ? Math.floor(globalStats.diff / globalStats.miners) : 0;
     const activePools = Array.from(pools.keys()).filter((hostname) => isPoolUsable(hostname)).length;
     const hashrateBucket = bucketHashrate(globalStats.hashRate);
     const summaryKey = JSON.stringify({
@@ -102,15 +100,11 @@ function createSummaryState({ globalStats, pools, isPoolUsable, hashrateAlgo, la
         meta: {
             miners: globalStats.miners,
             hashrate: humanHashrate(globalStats.hashRate, hashrateAlgo),
-            avgDiff: summaryAverageDiff(globalStats, averageDiff),
+            avgDiff: globalStats.miners > 0 ? averageDiff : undefined,
             activePools,
             algo: hashrateAlgo !== "h/s" ? hashrateAlgo : undefined
         }
     };
-}
-function averageMinerDiff(globalStats) {
-    if (globalStats.miners <= 0) return 0;
-    return Math.floor(globalStats.diff / globalStats.miners);
 }
 function bucketHashrate(hashRate) {
     if (hashRate >= 1000) return Math.round(hashRate / 100) * 100;
@@ -119,10 +113,6 @@ function bucketHashrate(hashRate) {
 function shouldLogSummary(summaryKey, lastSummaryKey, now, lastSummaryLogAt) {
     if (summaryKey !== lastSummaryKey) return true;
     return (now - lastSummaryLogAt) >= 60_000;
-}
-function summaryAverageDiff(globalStats, averageDiff) {
-    if (globalStats.miners <= 0) return undefined;
-    return averageDiff;
 }
 function buildMonitorSnapshot({ workers, pools, developerShare, hashrateAlgo, isPoolUsable }) {
     const miners = [];
@@ -145,7 +135,7 @@ function buildMonitorSnapshot({ workers, pools, developerShare, hashrateAlgo, is
     for (const miner of offlineMiners) addOfflineMinerView(miners, seenNames, miner);
     miners.sort(compareMinerViews);
     const poolList = Array.from(pools.values())
-        .filter((pool) => includePoolInSnapshot(pool, developerShare))
+        .filter((pool) => !pool.devPool || developerShare > 0)
         .map((pool) => poolSnapshotView(pool, poolHashrate, isPoolUsable))
         .sort((left, right) => right.hashrate - left.hashrate);
     return {
@@ -183,10 +173,6 @@ function addMinerView(miners, offlineMiners, seenNames, poolHashrate, view, tota
 function compareMinerViews(left, right) {
     if (left.active === right.active) return right.avgSpeed - left.avgSpeed;
     return left.active ? -1 : 1;
-}
-function includePoolInSnapshot(pool, developerShare) {
-    if (!pool.devPool) return true;
-    return developerShare > 0;
 }
 function poolSnapshotView(pool, poolHashrate, isPoolUsable) {
     return {

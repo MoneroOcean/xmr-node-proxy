@@ -14,7 +14,7 @@ const METHOD_HANDLERS = new Map([
 class MinerSession {
     constructor(options) {
         Object.assign(this, createMinerBaseState(options));
-        const loginDiffSplit = splitLogin(options.params.login);
+        const loginDiffSplit = options.params.login ? options.params.login.split("+") : [""];
         const passAlgoSplit = this.applyLoginParams(options, loginDiffSplit);
         applyPasswordAlgo(options.params, passAlgoSplit);
         this.algos = buildAlgoSet(options.params.algo);
@@ -33,7 +33,7 @@ class MinerSession {
         this.password = passSplit[0];
         this.agent = options.params.agent || "";
         this.ip = options.ip;
-        this.identifier = minerIdentifier(options.runtime.config, this.user, passSplit[0]);
+        this.identifier = options.runtime.config.addressWorkerID ? this.user : passSplit[0];
         this.logString = minerLogString(this.identifier, this.ip);
         this.difficulty = Number(options.portData.diff);
         this.error = "";
@@ -57,14 +57,14 @@ class MinerSession {
         return false;
     }
     validateLogin() {
-        if (invalidDifficulty(this.difficulty)) return this.invalidateAndNull("Invalid difficulty");
+        if (!Number.isFinite(this.difficulty) || this.difficulty <= 0) return this.invalidateAndNull("Invalid difficulty");
         if (!this.pool) return this.invalidateAndNull("No active pool available");
         return this.validateLoginPool();
     }
     validateLoginPool() {
         if (!this.runtime.isAllowedLogin(this.user, this.password)) return this.invalidateAndNull("Unauthorized access");
         const poolState = this.runtime.pools.get(this.pool);
-        if (!hasActiveTemplate(poolState)) return this.invalidateAndNull("No active block template");
+        if (!poolState || !poolState.activeBlockTemplate) return this.invalidateAndNull("No active block template");
         return poolState;
     }
     invalidateAndNull(reason) {
@@ -161,22 +161,10 @@ function applyPasswordAlgo(params, passAlgoSplit) {
     params.algo = [algoName];
     params["algo-perf"] = { [algoName]: 1 };
 }
-function splitLogin(login) {
-    return login ? login.split("+") : [""];
-}
-function minerIdentifier(config, user, password) {
-    return config.addressWorkerID ? user : password;
-}
 function minerLogString(identifier, ip) {
     if (!identifier) return ip;
     if (identifier === "x") return ip;
     return `${identifier} (${ip})`;
-}
-function invalidDifficulty(difficulty) {
-    return !Number.isFinite(difficulty) || difficulty <= 0;
-}
-function hasActiveTemplate(poolState) {
-    return Boolean(poolState) && Boolean(poolState.activeBlockTemplate);
 }
 function buildAlgoSet(algos) {
     if (!Array.isArray(algos)) return null;
@@ -483,15 +471,11 @@ function hasBadNonce(miner, job, params) {
         return hasBadGrinNonce(miner, blobTypeNum, params);
     }
     const pattern = miner.coins.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX : NONCE_32_HEX;
-    return hasBadHexNonce(pattern, params.nonce);
+    return typeof params.nonce !== "string" || !pattern.test(params.nonce);
 }
 function hasBadGrinNonce(miner, blobTypeNum, params) {
     if (!Number.isInteger(params.nonce)) return true;
     if (!Array.isArray(params.pow)) return true;
     return params.pow.length !== miner.coins.c29ProofSize(blobTypeNum);
-}
-function hasBadHexNonce(pattern, nonce) {
-    if (typeof nonce !== "string") return true;
-    return !pattern.test(nonce);
 }
 module.exports = { MinerProtocol, MinerSession };

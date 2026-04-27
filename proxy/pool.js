@@ -170,15 +170,12 @@ class UpstreamPoolClient {
             id: this.sendId++,
             params: { ...params }
         };
-        this.applyPoolId(payload);
+        if (this.poolId) payload.params.id = this.poolId;
         this.socket.write(`${JSON.stringify(payload)}\n`);
         this.sendLog.set(payload.id, { method, timestamp: Date.now() });
         this.logger.debug("pool", `Sent ${method} to ${this.hostname}`, payload.params);
         if (this.sendLog.size > 1024) this.pruneSendLog();
         return true;
-    }
-    applyPoolId(payload) {
-        if (this.poolId) payload.params.id = this.poolId;
     }
     pruneSendLog() {
         const cutoff = Date.now() - (10 * 60_000);
@@ -260,12 +257,9 @@ class UpstreamPoolClient {
         return this.sendLog.get(message.id);
     }
     handleJobNotify(message) {
-        if (!this.isJobNotify(message)) return false;
+        if (message.method !== "job") return false;
         this.master.handlePoolTemplate(this, message.params);
         return true;
-    }
-    isJobNotify(message) {
-        return message.method === "job";
     }
     handleErrorReply(message, sendLog) {
         if (sendLog) this.sendLog.delete(message.id);
