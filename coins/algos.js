@@ -14,10 +14,6 @@ function cryptonightHasher(variant, useHeight = false) {
         : powHash.cryptonight(convertedBlob, variant);
 }
 
-function fixedHasher(handler) {
-    return handler;
-}
-
 const HASH_DISPATCH = new Map();
 
 function registerHash(names, handler) {
@@ -44,12 +40,12 @@ registerHash(["cn/ccx", "cryptonight/ccx"], cryptonightHasher(17));
 registerHash(["cn/double", "cryptonight/double"], cryptonightHasher(16));
 registerHash(["ghostrider"], cryptonightHasher(18));
 registerHash(["flex"], cryptonightHasher(19));
-registerHash(["cn-lite", "cryptonight-lite", "cn-lite/0", "cryptonight-lite/0"], fixedHasher((convertedBlob) => powHash.cryptonight_light(convertedBlob, 0)));
-registerHash(["cn-lite/1", "cryptonight-lite/1"], fixedHasher((convertedBlob) => powHash.cryptonight_light(convertedBlob, 1)));
-registerHash(["cn-heavy", "cryptonight-heavy", "cn-heavy/0", "cryptonight-heavy/0"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 0)));
-registerHash(["cn-heavy/xhv", "cryptonight-heavy/xhv"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 1)));
-registerHash(["cn-heavy/tube", "cryptonight-heavy/tube"], fixedHasher((convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 2)));
-registerHash(["cn-pico/trtl", "cryptonight-pico/trtl"], fixedHasher((convertedBlob) => powHash.cryptonight_pico(convertedBlob, 0)));
+registerHash(["cn-lite", "cryptonight-lite", "cn-lite/0", "cryptonight-lite/0"], (convertedBlob) => powHash.cryptonight_light(convertedBlob, 0));
+registerHash(["cn-lite/1", "cryptonight-lite/1"], (convertedBlob) => powHash.cryptonight_light(convertedBlob, 1));
+registerHash(["cn-heavy", "cryptonight-heavy", "cn-heavy/0", "cryptonight-heavy/0"], (convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 0));
+registerHash(["cn-heavy/xhv", "cryptonight-heavy/xhv"], (convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 1));
+registerHash(["cn-heavy/tube", "cryptonight-heavy/tube"], (convertedBlob) => powHash.cryptonight_heavy(convertedBlob, 2));
+registerHash(["cn-pico/trtl", "cryptonight-pico/trtl"], (convertedBlob) => powHash.cryptonight_pico(convertedBlob, 0));
 registerHash(["rx/wow", "randomx/wow"], randomxHasher(17));
 registerHash(["rx/loki", "randomx/loki"], randomxHasher(18));
 registerHash(["rx/v"], randomxHasher(19));
@@ -58,10 +54,10 @@ registerHash(["rx/xeq"], randomxHasher(22));
 registerHash(["defyx"], randomxHasher(1));
 registerHash(["panthera"], randomxHasher(3));
 registerHash(["rx/arq"], randomxHasher(2));
-registerHash(["argon2/chukwav2", "chukwav2"], fixedHasher((convertedBlob) => powHash.argon2(convertedBlob, 2)));
-registerHash(["argon2/wrkz"], fixedHasher((convertedBlob) => powHash.argon2(convertedBlob, 1)));
-registerHash(["k12"], fixedHasher((convertedBlob) => powHash.k12(convertedBlob)));
-registerHash(["astrobwt"], fixedHasher((convertedBlob) => powHash.astrobwt(convertedBlob, 0)));
+registerHash(["argon2/chukwav2", "chukwav2"], (convertedBlob) => powHash.argon2(convertedBlob, 2));
+registerHash(["argon2/wrkz"], (convertedBlob) => powHash.argon2(convertedBlob, 1));
+registerHash(["k12"], (convertedBlob) => powHash.k12(convertedBlob));
+registerHash(["astrobwt"], (convertedBlob) => powHash.astrobwt(convertedBlob, 0));
 
 const C29_HASHERS = {
     c29s: (header, ring) => powHash.c29s(header, ring),
@@ -69,20 +65,14 @@ const C29_HASHERS = {
     c29b: (header, ring) => powHash.c29b(header, ring),
     c29i: (header, ring) => powHash.c29i(header, ring)
 };
-
 function createAlgoTools({ logger = null } = {}) {
     function detectAlgo(defaultAlgoSet, blockVersion) {
-        if ("cn/r" in defaultAlgoSet && "rx/0" in defaultAlgoSet) {
-            return blockVersion >= 12 ? "rx/0" : "cn/r";
-        }
-
+        if (hasRandomxForkPair(defaultAlgoSet)) return randomxForkAlgo(blockVersion);
         const algos = Object.keys(defaultAlgoSet);
         if (algos.length === 1) return algos[0];
-
-        if (logger) logger.error("algo.detect_ambiguous", { algos: algos.join(",") });
+        logger?.error("algo.detect_ambiguous", { algos: algos.join(",") });
         return algos[0] || DEFAULT_ALGO[0];
     }
-
     function hashFunc(convertedBlob, blockTemplate) {
         const blockVersion = blockTemplate.blocktemplate_blob
             ? parseInt(blockTemplate.blocktemplate_blob.slice(0, 2), 16)
@@ -103,7 +93,12 @@ function createAlgoTools({ logger = null } = {}) {
         hashFuncC29
     };
 }
-
+function hasRandomxForkPair(defaultAlgoSet) {
+    return "cn/r" in defaultAlgoSet && "rx/0" in defaultAlgoSet;
+}
+function randomxForkAlgo(blockVersion) {
+    return blockVersion >= 12 ? "rx/0" : "cn/r";
+}
 module.exports = {
     createAlgoTools
 };

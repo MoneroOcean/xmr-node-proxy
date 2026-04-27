@@ -6,13 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const createCoins = require("./coins/core");
 
-const {
-    PROXY_VERSION,
-    createLogger,
-    loadJsonFile,
-    normalizeConfig,
-    parseArgs
-} = require("./proxy/common");
+const { PROXY_VERSION, createLogger, loadJsonFile, normalizeConfig, parseArgs } = require("./proxy/common");
 const { MasterController } = require("./proxy/master");
 const { WorkerController } = require("./proxy/worker");
 
@@ -20,13 +14,9 @@ function loadRuntimeConfig(configPath) {
     const rawConfig = loadJsonFile(configPath);
     return normalizeConfig(rawConfig, configPath);
 }
-
 class StandaloneProxyApp {
     constructor(options) {
-        this.configPath = options.configPath || path.resolve(process.cwd(), "config.json");
-        this.coinsFactory = options.coinsFactory || createCoins;
-        this.logger = options.logger || createLogger({ component: "xnp" });
-        this.instanceId = options.instanceId || crypto.randomBytes(3);
+        Object.assign(this, getStandaloneOptions(options));
         const initialConfig = options.config || loadRuntimeConfig(this.configPath);
         this.applyControllers(this.createControllers(initialConfig));
     }
@@ -184,38 +174,25 @@ class ClusterRuntimeManager {
             this.spawnWorker();
         }
     }
-
     handleWorkerExit(worker, code, signal) {
-        if (this.master) {
-            this.master.detachWorker(String(worker.id));
-        }
-        const log = this.shuttingDown || this.reloading ? this.logger.info.bind(this.logger) : this.logger.error.bind(this.logger);
-        log("cluster.worker_exit", {
-            pid: worker.process.pid,
-            code,
-            signal
-        });
-        if (!this.shuttingDown && !this.reloading) {
-            this.spawnWorker();
-        }
+        if (this.master) this.master.detachWorker(String(worker.id));
+        const log = this.isStoppingOrReloading() ? this.logger.info.bind(this.logger) : this.logger.error.bind(this.logger);
+        log("cluster.worker_exit", { pid: worker.process.pid, code, signal });
+        if (this.shouldRespawnWorkers()) this.spawnWorker();
     }
-
+    isStoppingOrReloading() {
+        return this.shuttingDown || this.reloading;
+    }
+    shouldRespawnWorkers() {
+        return !this.isStoppingOrReloading();
+    }
     async reload() {
         if (this.shuttingDown || this.reloading) return false;
-
         const nextConfig = loadRuntimeConfig(this.configPath);
         this.logger.info("config.reload_start", { mode: "cluster" });
         this.reloading = true;
-
         try {
-            await this.stopWorkers();
-            if (this.master) await this.master.stop();
-            this.config = nextConfig;
-            this.master = this.createMasterController(this.config);
-            this.master.start();
-            for (let index = 0; index < this.workerCount; index += 1) {
-                this.spawnWorker();
-            }
+            await this.replaceRuntime(nextConfig);
             this.logger.info("config.reload_complete", { mode: "cluster" });
             return true;
         } catch (error) {
@@ -228,7 +205,14 @@ class ClusterRuntimeManager {
             this.reloading = false;
         }
     }
-
+    async replaceRuntime(nextConfig) {
+        await this.stopWorkers();
+        if (this.master) await this.master.stop();
+        this.config = nextConfig;
+        this.master = this.createMasterController(this.config);
+        this.master.start();
+        for (let index = 0; index < this.workerCount; index += 1) this.spawnWorker();
+    }
     async stop() {
         if (this.shuttingDown) return;
         this.shuttingDown = true;
@@ -239,7 +223,17 @@ class ClusterRuntimeManager {
         }
     }
 }
-
+function getStandaloneOptions(options) {
+    return {
+        configPath: resolveDefaultConfigPath(options.configPath),
+        coinsFactory: options.coinsFactory || createCoins,
+        logger: options.logger || createLogger({ component: "xnp" }),
+        instanceId: options.instanceId || crypto.randomBytes(3)
+    };
+}
+function resolveDefaultConfigPath(configPath) {
+    return configPath || path.resolve(process.cwd(), "config.json");
+}
 function createMasterRuntime(options) {
     const runtime = new ClusterRuntimeManager(options);
     runtime.start();
@@ -299,49 +293,48 @@ function registerSignalHandlers({ stop, reload = null }) {
         process.on("SIGHUP", reloadHandler);
     }
 }
-
 async function main(options = {}) {
     const args = parseArgs(options.argv || process.argv.slice(2));
-    const configPath = options.configPath || process.env.XNP_CONFIG_PATH || args.config;
-    const config = options.config || loadRuntimeConfig(configPath);
-    const instanceId = options.instanceId || (
-        process.env.XNP_INSTANCE_ID
-            ? Buffer.from(process.env.XNP_INSTANCE_ID, "hex")
-            : crypto.randomBytes(3)
-    );
-    const coinsFactory = options.coinsFactory || createCoins;
-
+    const runtimeOptions = buildRuntimeOptions(options, args);
+    return startRuntime(args, runtimeOptions);
+}
+function buildRuntimeOptions(options, args) {
+    const configPath = resolveRuntimeConfigPath(options, args);
+    return {
+        config: options.config || loadRuntimeConfig(configPath),
+        configPath,
+        instanceId: options.instanceId || getInstanceId(),
+        coinsFactory: options.coinsFactory || createCoins
+    };
+}
+function resolveRuntimeConfigPath(options, args) {
+    return options.configPath || process.env.XNP_CONFIG_PATH || args.config;
+}
+function startRuntime(args, options) {
     if (args.standalone) {
-        const app = new StandaloneProxyApp({ config, configPath, instanceId, coinsFactory });
-        app.start();
-        registerSignalHandlers({
-            reload: () => app.reload(),
-            stop: async () => {
-                await app.stop();
-                process.exit(0);
-            }
-        });
+        startStandaloneRuntime(options);
         return;
     }
-
     if (cluster.isPrimary) {
-        createMasterRuntime({
-            config,
-            configPath,
-            instanceId,
-            workerCount: args.workers,
-            coinsFactory
-        });
+        createMasterRuntime({ ...options, workerCount: args.workers });
         return;
     }
-
-    createWorkerRuntime({
-        config,
-        instanceId,
-        coinsFactory
+    createWorkerRuntime(options);
+}
+function getInstanceId() {
+    return process.env.XNP_INSTANCE_ID ? Buffer.from(process.env.XNP_INSTANCE_ID, "hex") : crypto.randomBytes(3);
+}
+function startStandaloneRuntime({ config, configPath, instanceId, coinsFactory }) {
+    const app = new StandaloneProxyApp({ config, configPath, instanceId, coinsFactory });
+    app.start();
+    registerSignalHandlers({
+        reload: () => app.reload(),
+        stop: async () => {
+            await app.stop();
+            process.exit(0);
+        }
     });
 }
-
 if (require.main === module) {
     main().catch((error) => {
         console.error(error);
@@ -349,11 +342,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = {
-    ClusterRuntimeManager,
-    PROXY_VERSION,
-    StandaloneProxyApp,
-    createStandaloneApp,
-    loadRuntimeConfig,
-    main
-};
+module.exports = { ClusterRuntimeManager, PROXY_VERSION, StandaloneProxyApp, createStandaloneApp, loadRuntimeConfig, main };

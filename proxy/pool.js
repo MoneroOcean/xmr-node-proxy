@@ -90,27 +90,14 @@ class UpstreamPoolClient {
             socket.end();
             socket.destroy();
         } catch (_error) {
-            // Best effort cleanup.
+            // Ignore close failures after dropping the pool socket reference.
         }
     }
 
     connect() {
         if (this.stopping) return;
         this.destroySocket();
-
-        const socket = this.ssl
-            ? tls.connect({
-                host: this.hostname,
-                port: this.port,
-                servername: net.isIP(this.hostname) ? undefined : this.hostname,
-                minVersion: "TLSv1.2",
-                rejectUnauthorized: !this.poolConfig.allowSelfSignedSSL
-            })
-            : net.connect({
-                host: this.hostname,
-                port: this.port
-            });
-
+        const socket = this.createSocket();
         this.socket = socket;
         socket.setKeepAlive(true);
         socket.setEncoding("utf8");
@@ -156,7 +143,16 @@ class UpstreamPoolClient {
             this.scheduleConnect();
         });
     }
-
+    createSocket() {
+        if (!this.ssl) return net.connect({ host: this.hostname, port: this.port });
+        return tls.connect({
+            host: this.hostname,
+            port: this.port,
+            servername: net.isIP(this.hostname) ? undefined : this.hostname,
+            minVersion: "TLSv1.2",
+            rejectUnauthorized: !this.poolConfig.allowSelfSignedSSL
+        });
+    }
     markUnavailable(reason) {
         this.connected = false;
         this.enabled = false;
@@ -174,20 +170,23 @@ class UpstreamPoolClient {
             id: this.sendId++,
             params: { ...params }
         };
-        if (this.poolId) payload.params.id = this.poolId;
+        this.applyPoolId(payload);
         this.socket.write(`${JSON.stringify(payload)}\n`);
         this.sendLog.set(payload.id, { method, timestamp: Date.now() });
         this.logger.debug("pool", `Sent ${method} to ${this.hostname}`, payload.params);
-        if (this.sendLog.size > 1024) {
-            const cutoff = Date.now() - (10 * 60_000);
-            for (const [id, entry] of this.sendLog) {
-                if (entry.timestamp >= cutoff) break;
-                this.sendLog.delete(id);
-            }
-        }
+        if (this.sendLog.size > 1024) this.pruneSendLog();
         return true;
     }
-
+    applyPoolId(payload) {
+        if (this.poolId) payload.params.id = this.poolId;
+    }
+    pruneSendLog() {
+        const cutoff = Date.now() - (10 * 60_000);
+        for (const [id, entry] of this.sendLog) {
+            if (entry.timestamp >= cutoff) break;
+            this.sendLog.delete(id);
+        }
+    }
     login() {
         this.sendData("login", {
             login: this.username,
@@ -212,29 +211,29 @@ class UpstreamPoolClient {
         const nextAlgoKey = JSON.stringify(Object.keys(algos));
         const nextPerfKey = JSON.stringify(algosPerf);
         if (prevAlgoKey === nextAlgoKey && prevPerfKey === nextPerfKey) return;
-
         this.algos = { ...algos };
         this.algosPerf = { ...algosPerf };
-
         const now = Date.now();
-        if (!this.lastCommonAlgoNotifyTime || (now - this.lastCommonAlgoNotifyTime) > 300_000 || prevAlgoKey !== nextAlgoKey) {
-            this.logger.info("pool.algos", {
-                host: this.hostname,
-                algos: Object.keys(this.algos).join(","),
-                perf: Object.entries(this.algosPerf).map(([algo, value]) => `${algo}:${value}`).join(","),
-                algoMinTime: this.algoMinTime
-            });
-            this.lastCommonAlgoNotifyTime = now;
-        }
-
-        if (this.connected) {
-            this.sendData("getjob", this.currentAlgoParams());
-        }
+        this.logAlgoChangeIfNeeded(now, prevAlgoKey, nextAlgoKey);
+        if (this.connected) this.sendData("getjob", this.currentAlgoParams());
     }
-
+    logAlgoChangeIfNeeded(now, prevAlgoKey, nextAlgoKey) {
+        if (this.shouldLogAlgoChange(now, prevAlgoKey, nextAlgoKey)) this.logAlgoChange(now);
+    }
+    shouldLogAlgoChange(now, prevAlgoKey, nextAlgoKey) {
+        return !this.lastCommonAlgoNotifyTime || (now - this.lastCommonAlgoNotifyTime) > 300_000 || prevAlgoKey !== nextAlgoKey;
+    }
+    logAlgoChange(now) {
+        this.logger.info("pool.algos", {
+            host: this.hostname,
+            algos: Object.keys(this.algos).join(","),
+            perf: Object.entries(this.algosPerf).map(([algo, value]) => `${algo}:${value}`).join(","),
+            algoMinTime: this.algoMinTime
+        });
+        this.lastCommonAlgoNotifyTime = now;
+    }
     handleLine(line) {
         if (respondToHttpProbe(this.socket, line)) return;
-
         let message;
         try {
             message = JSON.parse(line);
@@ -247,84 +246,76 @@ class UpstreamPoolClient {
         }
         this.handleMessage(message);
     }
-
     handleMessage(message) {
         this.logger.debug("pool", `Received message from ${this.hostname}`, message);
-
-        if (message.method === "job") {
-            this.master.handlePoolTemplate(this, message.params);
-            return;
-        }
-
-        const sendLog = message.id !== undefined ? this.sendLog.get(message.id) : null;
-
-        if (message.error) {
-            if (sendLog) this.sendLog.delete(message.id);
-
-            if (this.isTemplatePendingError(message.error.message)) {
-                this.logger.warn("pool.no_template_yet", {
-                    host: this.hostname,
-                    method: sendLog?.method || "request",
-                    retryMs: 2000
-                });
-                this.destroySocket();
-                this.scheduleConnect(2_000);
-                return;
-            }
-
-            this.logger.error("pool.reply_error", {
-                host: this.hostname,
-                method: sendLog?.method,
-                code: message.error.code,
-                error: message.error.message
-            });
-            if (typeof message.error.message === "string" && message.error.message.includes("Unauthenticated")) {
-                this.markUnavailable("upstream-unauthenticated");
-                this.destroySocket();
-                this.scheduleConnect();
-            }
-            return;
-        }
-
-        if (!sendLog) {
-            this.logger.warn("pool.unknown_reply", {
-                host: this.hostname,
-                id: message.id
-            });
-            return;
-        }
+        if (this.handleJobNotify(message)) return;
+        const sendLog = this.getSendLog(message);
+        if (message.error) return this.handleErrorReply(message, sendLog);
+        if (!sendLog) return this.logger.warn("pool.unknown_reply", { host: this.hostname, id: message.id });
         this.sendLog.delete(message.id);
-
-        switch (sendLog.method) {
-        case "login":
-            if (!message.result || !message.result.id || !message.result.job) {
-                this.logger.error("pool.login_invalid", {
-                    host: this.hostname
-                });
-                this.markUnavailable("invalid-login-response");
-                this.destroySocket();
-                this.scheduleConnect();
-                return;
-            }
-            this.poolId = message.result.id;
-            this.master.handlePoolTemplate(this, message.result.job);
-            return;
-        case "getjob":
-            if (message.result !== null) {
-                this.master.handlePoolTemplate(this, message.result);
-            }
-            return;
-        case "keepalived":
-        case "submit":
-            return;
-        default:
-            this.logger.warn("pool.reply_unhandled", {
-                host: this.hostname,
-                method: sendLog.method
-            });
-        }
+        this.handleSuccessReply(message, sendLog);
     }
-
+    getSendLog(message) {
+        if (message.id === undefined) return null;
+        return this.sendLog.get(message.id);
+    }
+    handleJobNotify(message) {
+        if (!this.isJobNotify(message)) return false;
+        this.master.handlePoolTemplate(this, message.params);
+        return true;
+    }
+    isJobNotify(message) {
+        return message.method === "job";
+    }
+    handleErrorReply(message, sendLog) {
+        if (sendLog) this.sendLog.delete(message.id);
+        if (this.handlePendingTemplateError(message, sendLog)) return;
+        this.logger.error("pool.reply_error", {
+            host: this.hostname,
+            method: sendLog?.method,
+            code: message.error.code,
+            error: message.error.message
+        });
+        if (isUnauthenticatedError(message.error.message)) this.reconnectUnavailable("upstream-unauthenticated");
+    }
+    handlePendingTemplateError(message, sendLog) {
+        if (!this.isTemplatePendingError(message.error.message)) return false;
+        this.logger.warn("pool.no_template_yet", { host: this.hostname, method: sendLog?.method || "request", retryMs: 2000 });
+        this.destroySocket();
+        this.scheduleConnect(2_000);
+        return true;
+    }
+    reconnectUnavailable(reason) {
+        this.markUnavailable(reason);
+        this.destroySocket();
+        this.scheduleConnect();
+    }
+    handleSuccessReply(message, sendLog) {
+        if (sendLog.method === "login") {
+            this.handleLoginReply(message);
+            return;
+        }
+        if (sendLog.method === "getjob") {
+            this.handleGetJobReply(message);
+            return;
+        }
+        if (["keepalived", "submit"].includes(sendLog.method)) {
+            return;
+        }
+        this.logger.warn("pool.reply_unhandled", { host: this.hostname, method: sendLog.method });
+    }
+    handleGetJobReply(message) {
+        if (message.result !== null) this.master.handlePoolTemplate(this, message.result);
+    }
+    handleLoginReply(message) {
+        if (!message.result || !message.result.id || !message.result.job) {
+            this.logger.error("pool.login_invalid", { host: this.hostname });
+            this.reconnectUnavailable("invalid-login-response");
+            return;
+        }
+        this.poolId = message.result.id;
+        this.master.handlePoolTemplate(this, message.result.job);
+    }
     sendShare(workerId, shareData) {
         const jobs = this.workerJobs.get(workerId);
         if (!jobs) return;
@@ -337,12 +328,15 @@ class UpstreamPoolClient {
             workerNonce: shareData.workerNonce,
             poolNonce: job.poolNonce
         };
-        if (shareData.resultHash) params.result = shareData.resultHash;
-        if (shareData.pow) params.pow = shareData.pow;
+        copyOptionalShareParams(params, shareData);
         this.sendData("submit", params);
     }
 }
-
-module.exports = {
-    UpstreamPoolClient
-};
+function copyOptionalShareParams(params, shareData) {
+    if (shareData.resultHash) params.result = shareData.resultHash;
+    if (shareData.pow) params.pow = shareData.pow;
+}
+function isUnauthenticatedError(message) {
+    return typeof message === "string" && message.includes("Unauthenticated");
+}
+module.exports = { UpstreamPoolClient };

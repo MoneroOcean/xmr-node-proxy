@@ -1,38 +1,29 @@
 "use strict";
 
-const {
-    CircularBuffer,
-    createLineParser,
-    randomId,
-    respondToHttpProbe,
-    writeJsonLine
-} = require("./common");
-
+const { CircularBuffer, createLineParser, randomId, respondToHttpProbe, writeJsonLine } = require("./common");
 const NONCE_32_HEX = /^[0-9a-f]{8}$/;
 const NONCE_64_HEX = /^[0-9a-f]{16}$/;
-
+const METHOD_HANDLERS = new Map([
+    ["login", (protocol, socket, request, portData, pushMessage, reply, replyFinal) => protocol.handleLogin(socket, request, portData, pushMessage, reply, replyFinal)],
+    ["getjobtemplate", (protocol, socket, _request, _portData, _pushMessage, reply) => protocol.handleGetJobTemplate(socket, reply)],
+    ["getjob", (protocol, _socket, request, _portData, _pushMessage, reply, replyFinal) => protocol.handleGetJob(request.params, reply, replyFinal)],
+    ["submit", (protocol, socket, request, _portData, _pushMessage, reply, replyFinal) => protocol.handleSubmit(socket, request.params, reply, replyFinal)],
+    ["keepalive", (protocol, socket, request, _portData, _pushMessage, reply, replyFinal) => protocol.handleKeepalive(socket, request.params, reply, replyFinal)],
+    ["keepalived", (protocol, socket, request, _portData, _pushMessage, reply, replyFinal) => protocol.handleKeepalive(socket, request.params, reply, replyFinal)]
+]);
 class MinerSession {
     constructor(options) {
-        this.runtime = options.runtime;
-        this.id = options.id;
-        this.socket = options.socket;
-        this.pushMessage = options.pushMessage;
-        this.portData = options.portData;
-        this.protocol = "default";
-        this.coins = options.coins;
-        this.difficultySettings = options.difficultySettings;
-        this.connectTime = Date.now();
-        this.lastShareTime = Date.now() / 1000;
-        this.shares = 0;
-        this.blocks = 0;
-        this.hashes = 0;
-        this.newDiff = null;
-        this.incremented = false;
-        this.fixedDiff = false;
-        this.validJobs = new CircularBuffer(5);
-        this.cachedJob = null;
-
-        const loginDiffSplit = options.params.login ? options.params.login.split("+") : [""];
+        Object.assign(this, createMinerBaseState(options));
+        const loginDiffSplit = splitLogin(options.params.login);
+        const passAlgoSplit = this.applyLoginParams(options, loginDiffSplit);
+        applyPasswordAlgo(options.params, passAlgoSplit);
+        this.algos = buildAlgoSet(options.params.algo);
+        this.algosPerf = options.params["algo-perf"] || null;
+        this.pool = this.runtime.chooseInitialPool();
+        if (!this.applyLoginDifficulty(loginDiffSplit)) return;
+        this.finalizeLogin();
+    }
+    applyLoginParams(options, loginDiffSplit) {
         const pass = options.params.pass || "x";
         const passAlgoSplit = pass.split("~");
         const passSplit = passAlgoSplit[0].split(":");
@@ -42,70 +33,44 @@ class MinerSession {
         this.password = passSplit[0];
         this.agent = options.params.agent || "";
         this.ip = options.ip;
-        this.identifier = options.runtime.config.addressWorkerID ? this.user : passSplit[0];
-        this.logString = this.identifier && this.identifier !== "x" ? `${this.identifier} (${this.ip})` : this.ip;
+        this.identifier = minerIdentifier(options.runtime.config, this.user, passSplit[0]);
+        this.logString = minerLogString(this.identifier, this.ip);
         this.difficulty = Number(options.portData.diff);
         this.error = "";
         this.validMiner = true;
-
-        if (passAlgoSplit.length === 2) {
-            const algoName = passAlgoSplit[1];
-            options.params.algo = [algoName];
-            options.params["algo-perf"] = { [algoName]: 1 };
-        }
-
-        if (Array.isArray(options.params.algo)) {
-            this.algos = {};
-            for (const algo of options.params.algo) {
-                this.algos[algo] = 1;
-            }
-        } else {
-            this.algos = null;
-        }
-        this.algosPerf = options.params["algo-perf"] || null;
-
-        this.pool = this.runtime.chooseInitialPool();
+        return passAlgoSplit;
+    }
+    finalizeLogin() {
+        const poolState = this.validateLogin();
+        if (!poolState) return;
+        if (this.algos) warnUnsupportedAlgo(this, poolState);
+        this.heartbeat();
+    }
+    applyLoginDifficulty(loginDiffSplit) {
         if (loginDiffSplit.length === 2) {
             this.fixedDiff = true;
             this.difficulty = Number(loginDiffSplit[1]);
-        } else if (loginDiffSplit.length > 2) {
-            this.invalidate("Too many options in the login field");
-            return;
+            return true;
         }
-
-        if (!Number.isFinite(this.difficulty) || this.difficulty <= 0) {
-            this.invalidate("Invalid difficulty");
-            return;
-        }
-
-        if (!this.pool) {
-            this.invalidate("No active pool available");
-            return;
-        }
-
-        if (!this.runtime.isAllowedLogin(this.user, this.password)) {
-            this.invalidate("Unauthorized access");
-            return;
-        }
-
-        const poolState = this.runtime.pools.get(this.pool);
-        if (!poolState || !poolState.activeBlockTemplate) {
-            this.invalidate("No active block template");
-            return;
-        }
-
-        if (this.algos) {
-            const blockTemplate = poolState.activeBlockTemplate;
-            const blockVersion = blockTemplate.blob ? parseInt(blockTemplate.blob.slice(0, 2), 16) : 0;
-            const poolAlgo = poolState.coins.detectAlgo(poolState.defaultAlgoSet, blockVersion);
-            if (!(poolAlgo in this.algos)) {
-                this.runtime.logger.warn(`Miner ${this.logString} does not support ${poolAlgo}`);
-            }
-        }
-
-        this.heartbeat();
+        if (loginDiffSplit.length <= 2) return true;
+        this.invalidate("Too many options in the login field");
+        return false;
     }
-
+    validateLogin() {
+        if (invalidDifficulty(this.difficulty)) return this.invalidateAndNull("Invalid difficulty");
+        if (!this.pool) return this.invalidateAndNull("No active pool available");
+        return this.validateLoginPool();
+    }
+    validateLoginPool() {
+        if (!this.runtime.isAllowedLogin(this.user, this.password)) return this.invalidateAndNull("Unauthorized access");
+        const poolState = this.runtime.pools.get(this.pool);
+        if (!hasActiveTemplate(poolState)) return this.invalidateAndNull("No active block template");
+        return poolState;
+    }
+    invalidateAndNull(reason) {
+        this.invalidate(reason);
+        return null;
+    }
     invalidate(reason) {
         this.validMiner = false;
         this.error = reason;
@@ -168,7 +133,63 @@ class MinerSession {
         };
     }
 }
-
+function createMinerBaseState(options) {
+    return {
+        runtime: options.runtime,
+        id: options.id,
+        socket: options.socket,
+        pushMessage: options.pushMessage,
+        portData: options.portData,
+        protocol: "default",
+        coins: options.coins,
+        difficultySettings: options.difficultySettings,
+        connectTime: Date.now(),
+        lastShareTime: Date.now() / 1000,
+        shares: 0,
+        blocks: 0,
+        hashes: 0,
+        newDiff: null,
+        incremented: false,
+        fixedDiff: false,
+        validJobs: new CircularBuffer(5),
+        cachedJob: null
+    };
+}
+function applyPasswordAlgo(params, passAlgoSplit) {
+    if (passAlgoSplit.length !== 2) return;
+    const algoName = passAlgoSplit[1];
+    params.algo = [algoName];
+    params["algo-perf"] = { [algoName]: 1 };
+}
+function splitLogin(login) {
+    return login ? login.split("+") : [""];
+}
+function minerIdentifier(config, user, password) {
+    return config.addressWorkerID ? user : password;
+}
+function minerLogString(identifier, ip) {
+    if (!identifier) return ip;
+    if (identifier === "x") return ip;
+    return `${identifier} (${ip})`;
+}
+function invalidDifficulty(difficulty) {
+    return !Number.isFinite(difficulty) || difficulty <= 0;
+}
+function hasActiveTemplate(poolState) {
+    return Boolean(poolState) && Boolean(poolState.activeBlockTemplate);
+}
+function buildAlgoSet(algos) {
+    if (!Array.isArray(algos)) return null;
+    const algoSet = {};
+    for (const algo of algos) algoSet[algo] = 1;
+    return algoSet;
+}
+function warnUnsupportedAlgo(miner, poolState) {
+    const blockTemplate = poolState.activeBlockTemplate;
+    const blockVersion = blockTemplate.blob ? parseInt(blockTemplate.blob.slice(0, 2), 16) : 0;
+    const poolAlgo = poolState.coins.detectAlgo(poolState.defaultAlgoSet, blockVersion);
+    if (!(poolAlgo in miner.algos)) miner.runtime.logger.warn(`Miner ${miner.logString} does not support ${poolAlgo}`);
+}
 class MinerProtocol {
     constructor(runtime) {
         this.runtime = runtime;
@@ -254,54 +275,48 @@ class MinerProtocol {
         if (!miner) reject("Unauthenticated");
         return miner;
     }
-
     handleMessage(socket, request, portData, pushMessage) {
         if (!request || typeof request !== "object") return;
-        if (!("id" in request)) {
-            this.runtime.logger.warn("miner.rpc_missing_id", {
-                remote: socket.remoteAddress
-            });
-            return;
-        }
-        if (typeof request.method !== "string") {
-            this.runtime.logger.warn("miner.rpc_missing_method", {
-                remote: socket.remoteAddress
-            });
-            return;
-        }
-
+        if (!this.validateRequest(socket, request)) return;
         const reply = (error, result) => this.sendReply(socket, request, error, result, false);
         const replyFinal = (error) => this.sendReply(socket, request, error, null, true);
-
-        switch (request.method) {
-        case "login":
-            this.handleLogin(socket, request, portData, pushMessage, reply, replyFinal);
-            return;
-        case "getjobtemplate":
-            this.handleGetJobTemplate(socket, reply);
-            return;
-        case "getjob":
-            this.handleGetJob(request.params, reply, replyFinal);
-            return;
-        case "submit":
-            this.handleSubmit(socket, request.params, reply, replyFinal);
-            return;
-        case "keepalive":
-        case "keepalived":
-            this.handleKeepalive(socket, request.params, reply, replyFinal);
-            return;
-        default:
-            reply("Unknown method");
-        }
+        this.dispatchMethod(socket, request, portData, pushMessage, reply, replyFinal);
     }
-
+    dispatchMethod(socket, request, portData, pushMessage, reply, replyFinal) {
+        const handler = this.getMethodHandler(request.method);
+        if (handler) handler(this, socket, request, portData, pushMessage, reply, replyFinal);
+        else reply("Unknown method");
+    }
+    validateRequest(socket, request) {
+        if (!("id" in request)) {
+            this.runtime.logger.warn("miner.rpc_missing_id", { remote: socket.remoteAddress });
+            return false;
+        }
+        if (typeof request.method === "string") return true;
+        this.runtime.logger.warn("miner.rpc_missing_method", { remote: socket.remoteAddress });
+        return false;
+    }
+    getMethodHandler(method) {
+        return METHOD_HANDLERS.get(method);
+    }
     handleLogin(socket, request, portData, pushMessage, reply, replyFinal) {
         const params = this.getParams(request.params, replyFinal);
         if (!params) return;
+        const miner = this.createMinerSession(socket, portData, pushMessage, params);
+        if (!this.acceptLogin(miner, socket, replyFinal)) return;
+        this.registerMiner(socket, request, miner);
+        reply(null, this.loginReply(miner));
+    }
+    registerMiner(socket, request, miner) {
+        socket.minerId = miner.id;
+        this.runtime.activeMiners.set(miner.id, miner);
+        if (this.runtime.config.keepOfflineMiners) this.removeDuplicateOfflineMiners(miner);
+        miner.protocol = request.id === "Stratum" ? "grin" : "default";
+        this.runtime.reportMinerStat(miner.id, miner);
+    }
+    createMinerSession(socket, portData, pushMessage, params) {
         const defaultPool = this.runtime.defaultPool || Array.from(this.runtime.pools.keys())[0];
-        const coins = this.runtime.pools.get(defaultPool)?.coins;
-        const difficultySettings = this.runtime.config.difficultySettings;
-        const miner = new MinerSession({
+        return new MinerSession({
             runtime: this.runtime,
             id: randomId(),
             socket,
@@ -309,40 +324,33 @@ class MinerProtocol {
             portData,
             params,
             ip: socket.remoteAddress,
-            coins,
-            difficultySettings
+            coins: this.runtime.pools.get(defaultPool)?.coins,
+            difficultySettings: this.runtime.config.difficultySettings
         });
-
-        if (!miner.validMiner) {
-            this.runtime.logger.warn("miner.login_rejected", {
-                miner: miner.logString || socket.remoteAddress,
-                reason: miner.error
-            });
-            replyFinal(miner.error);
-            return;
-        }
-
-        socket.minerId = miner.id;
-        this.runtime.activeMiners.set(miner.id, miner);
-        if (this.runtime.config.keepOfflineMiners) {
-            for (const [minerId, activeMiner] of this.runtime.activeMiners) {
-                if (minerId === miner.id) continue;
-                if (!activeMiner.socket.destroyed) continue;
-                if (activeMiner.identifier === miner.identifier && activeMiner.ip === miner.ip && activeMiner.agent === miner.agent) {
-                    this.runtime.activeMiners.delete(minerId);
-                }
-            }
-        }
-
-        miner.protocol = request.id === "Stratum" ? "grin" : "default";
-        this.runtime.reportMinerStat(miner.id, miner);
-        reply(null, miner.protocol === "grin" ? "ok" : {
+    }
+    loginReply(miner) {
+        if (miner.protocol === "grin") return "ok";
+        return {
             id: miner.id,
             job: miner.getNewJob(),
             status: "OK"
-        });
+        };
     }
-
+    acceptLogin(miner, socket, replyFinal) {
+        if (miner.validMiner) return true;
+        this.runtime.logger.warn("miner.login_rejected", {
+            miner: miner.logString || socket.remoteAddress,
+            reason: miner.error
+        });
+        replyFinal(miner.error);
+        return false;
+    }
+    removeDuplicateOfflineMiners(miner) {
+        for (const [minerId, activeMiner] of this.runtime.activeMiners) {
+            if (skipOfflineDuplicateCheck(minerId, activeMiner, miner)) continue;
+            if (sameMinerIdentity(activeMiner, miner)) this.runtime.activeMiners.delete(minerId);
+        }
+    }
     handleGetJobTemplate(socket, reply) {
         const miner = this.getMiner(socket.minerId, reply);
         if (!miner) return;
@@ -359,74 +367,72 @@ class MinerProtocol {
         miner.heartbeat();
         reply(null, miner.getNewJob());
     }
-
     handleSubmit(socket, params, reply, replyFinal) {
+        const submitState = this.getSubmitState(socket, params, reply, replyFinal);
+        if (!submitState) return;
+        ({ params } = submitState);
+        const { miner } = submitState;
+        if (typeof params.job_id === "number") params.job_id = String(params.job_id);
+        this.processSubmit(miner, params, reply);
+    }
+    processSubmit(miner, params, reply) {
+        const job = this.getSubmitJob(miner, params, reply);
+        if (!job) return;
+        if (!this.acceptNonce(miner, job, params, reply)) return;
+        const blockTemplate = this.findBlockTemplate(miner, job);
+        if (!blockTemplate) {
+            this.handleExpiredShare(miner, job, reply);
+            return;
+        }
+        this.processAcceptedShare(miner, job, blockTemplate, params, reply);
+    }
+    getSubmitState(socket, params, reply, replyFinal) {
         params = this.getParams(params, replyFinal);
-        if (!params) return;
-
+        if (!params) return null;
         const miner = this.getMiner(params.id || socket.minerId, reply);
-        if (!miner) return;
+        if (!miner) return null;
         miner.heartbeat();
-
-        if (typeof params.job_id === "number") {
-            params.job_id = String(params.job_id);
-        }
-
+        return { params, miner };
+    }
+    getSubmitJob(miner, params, reply) {
         const job = miner.validJobs.toarray().find((entry) => entry.id === params.job_id);
-        if (!job) {
-            reply("Invalid job id");
-            return;
-        }
-
-        const blobTypeNum = job.blob_type;
-        const isGrin = miner.coins.blobTypeGrin(blobTypeNum);
-        const badNonce = isGrin
-            ? (!Number.isInteger(params.nonce) || !Array.isArray(params.pow) || params.pow.length !== miner.coins.c29ProofSize(blobTypeNum))
-            : (typeof params.nonce !== "string" || !(miner.coins.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX.test(params.nonce) : NONCE_32_HEX.test(params.nonce)));
-
-        if (badNonce) {
-            this.runtime.logger.warn("share.bad_nonce", {
-                miner: miner.logString,
-                job: params.job_id
-            });
+        if (job) return job;
+        reply("Invalid job id");
+        return null;
+    }
+    acceptNonce(miner, job, params, reply) {
+        if (hasBadNonce(miner, job, params)) {
+            this.runtime.logger.warn("share.bad_nonce", { miner: miner.logString, job: params.job_id });
             reply("Duplicate share");
-            return;
+            return false;
         }
-
-        const nonceKey = isGrin ? params.pow.join(":") : params.nonce;
+        const nonceKey = miner.coins.blobTypeGrin(job.blob_type) ? params.pow.join(":") : params.nonce;
         if (job.submissions.includes(nonceKey)) {
-            this.runtime.logger.warn("share.duplicate", {
-                miner: miner.logString,
-                job: params.job_id,
-                nonce: nonceKey
-            });
+            this.runtime.logger.warn("share.duplicate", { miner: miner.logString, job: params.job_id, nonce: nonceKey });
             reply("Duplicate share");
-            return;
+            return false;
         }
         job.submissions.push(nonceKey);
-
+        return true;
+    }
+    findBlockTemplate(miner, job) {
         const poolState = this.runtime.pools.get(miner.pool);
-        const blockTemplate = poolState.activeBlockTemplate && poolState.activeBlockTemplate.id === job.templateID
-            ? poolState.activeBlockTemplate
-            : poolState.pastBlockTemplates.toarray().find((entry) => entry.id === job.templateID);
-
-        if (!blockTemplate) {
-            this.runtime.logger.warn("share.expired", {
-                miner: miner.logString,
-                height: job.height
-            });
-            if (miner.incremented === false) {
-                miner.newDiff = miner.difficulty + 1;
-                miner.incremented = true;
-            } else {
-                miner.newDiff = Math.max(1, miner.difficulty - 1);
-                miner.incremented = false;
-            }
-            miner.pushNewJob(true);
-            reply("Block expired");
-            return;
+        if (poolState.activeBlockTemplate && poolState.activeBlockTemplate.id === job.templateID) return poolState.activeBlockTemplate;
+        return poolState.pastBlockTemplates.toarray().find((entry) => entry.id === job.templateID);
+    }
+    handleExpiredShare(miner, job, reply) {
+        this.runtime.logger.warn("share.expired", { miner: miner.logString, height: job.height });
+        if (miner.incremented === false) {
+            miner.newDiff = miner.difficulty + 1;
+            miner.incremented = true;
+        } else {
+            miner.newDiff = Math.max(1, miner.difficulty - 1);
+            miner.incremented = false;
         }
-
+        miner.pushNewJob(true);
+        reply("Block expired");
+    }
+    processAcceptedShare(miner, job, blockTemplate, params, reply) {
         const accepted = miner.coins.processShare(miner, job, blockTemplate, params, {
             onPoolShare: (data) => {
                 this.runtime.sendToMaster({
@@ -464,8 +470,28 @@ class MinerProtocol {
         reply(null, { status: "KEEPALIVED" });
     }
 }
-
-module.exports = {
-    MinerProtocol,
-    MinerSession
-};
+function sameMinerIdentity(left, right) {
+    return left.identifier === right.identifier && left.ip === right.ip && left.agent === right.agent;
+}
+function skipOfflineDuplicateCheck(minerId, activeMiner, miner) {
+    if (minerId === miner.id) return true;
+    return !activeMiner.socket.destroyed;
+}
+function hasBadNonce(miner, job, params) {
+    const blobTypeNum = job.blob_type;
+    if (miner.coins.blobTypeGrin(blobTypeNum)) {
+        return hasBadGrinNonce(miner, blobTypeNum, params);
+    }
+    const pattern = miner.coins.nonceSize(blobTypeNum) === 8 ? NONCE_64_HEX : NONCE_32_HEX;
+    return hasBadHexNonce(pattern, params.nonce);
+}
+function hasBadGrinNonce(miner, blobTypeNum, params) {
+    if (!Number.isInteger(params.nonce)) return true;
+    if (!Array.isArray(params.pow)) return true;
+    return params.pow.length !== miner.coins.c29ProofSize(blobTypeNum);
+}
+function hasBadHexNonce(pattern, nonce) {
+    if (typeof nonce !== "string") return true;
+    return !pattern.test(nonce);
+}
+module.exports = { MinerProtocol, MinerSession };

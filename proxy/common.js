@@ -10,7 +10,33 @@ const DEFAULT_ALGO_PERF = { "rx/0": 1, "rx/loki": 1 };
 const HTTP_OK_RESPONSE = " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 19\r\n\r\nMining Proxy Online";
 const MAX_JSON_LINE_BYTES = 128 * 1024;
 const ACCESS_CONTROL_REFRESH_MS = 60_000;
-
+const FALSE_FLAGS = new Set(["0", "false", "no", "off"]);
+const TRUE_FLAGS = new Set(["1", "true", "yes", "on"]);
+const C29_HASHRATE_MULTIPLIERS = new Map([["c29s", 32], ["c29v", 16]]);
+const LOG_FORMATTERS = {
+    undefined: () => "",
+    number: String,
+    boolean: String,
+    bigint: String,
+    string: formatLogString,
+    object: formatObjectLogValue
+};
+const ARG_HANDLERS = {
+    "--standalone": (result) => {
+        result.standalone = true;
+        return false;
+    },
+    "--config": (result, value) => {
+        if (value === undefined) return false;
+        result.config = path.resolve(process.cwd(), value);
+        return true;
+    },
+    "--workers": (result, value) => {
+        if (value === undefined) return false;
+        result.workers = Number.parseInt(value, 10);
+        return true;
+    }
+};
 function maybeUnref(timer) {
     if (timer && typeof timer.unref === "function") timer.unref();
     return timer;
@@ -33,31 +59,12 @@ class CircularBuffer {
         return undefined;
     }
 
-    deq() {
-        return this.items.pop();
-    }
-
     get(index) {
         return this.items[index];
     }
 
     size() {
         return this.items.length;
-    }
-
-    clear() {
-        this.items.length = 0;
-    }
-
-    sum() {
-        if (this.items.length === 0) return 0;
-        return this.items.reduce((total, item) => total + item, 0);
-    }
-
-    average(lastShareTimeSeconds, targetTimeSeconds = 15) {
-        if (this.items.length === 0) return targetTimeSeconds * 1.5;
-        const secondsSinceLastShare = Math.max(0, Math.round((Date.now() / 1000) - lastShareTimeSeconds));
-        return (this.sum() + secondsSinceLastShare) / (this.items.length + 1);
     }
 
     toarray() {
@@ -92,40 +99,33 @@ function formatTimestamp(date = new Date()) {
     const second = String(date.getSeconds()).padStart(2, "0");
     return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
-
 function formatLogValue(value) {
-    if (value === undefined) return "";
-    if (value === null) return "null";
-    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
-        return String(value);
-    }
-    if (typeof value === "string") {
-        return /^[a-zA-Z0-9._:/,@%+\-=]+$/.test(value) ? value : JSON.stringify(value);
-    }
+    const formatter = LOG_FORMATTERS[typeof value] || JSON.stringify;
+    return formatter(value);
+}
+function formatLogString(value) {
+    if (/^[a-zA-Z0-9._:/,@%+\-=]+$/.test(value)) return value;
     return JSON.stringify(value);
 }
-
+function formatObjectLogValue(value) {
+    if (value === null) return "null";
+    return JSON.stringify(value);
+}
 function formatLogMeta(meta) {
     if (meta === undefined || meta === null) return "";
-    if (typeof meta !== "object" || Array.isArray(meta)) {
-        return formatLogValue(meta);
-    }
-
+    if (!isPlainObject(meta)) return formatLogValue(meta);
     return Object.entries(meta)
         .filter(([, value]) => value !== undefined)
         .map(([key, value]) => `${key}=${formatLogValue(value)}`)
         .join(" ");
 }
-
 function envFlagEnabled(rawValue, defaultValue = true) {
-    if (rawValue === undefined || rawValue === null || rawValue === "") return defaultValue;
-
+    if (isBlank(rawValue)) return defaultValue;
     const normalized = String(rawValue).trim().toLowerCase();
-    if (["0", "false", "no", "off"].includes(normalized)) return false;
-    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (FALSE_FLAGS.has(normalized)) return false;
+    if (TRUE_FLAGS.has(normalized)) return true;
     return defaultValue;
 }
-
 function createLogger({
     prefix = "",
     component = "",
@@ -140,16 +140,9 @@ function createLogger({
         error: "ERR",
         debug: "DBG"
     };
-
     function write(level, sink, message, meta, namespace = "") {
-        const parts = [];
-        if (timestamps) parts.push(formatTimestamp());
-        parts.push(levelLabels[level], componentValue || "-", namespace ? `${namespace} ${message}` : message);
-        const metaText = formatLogMeta(meta);
-        if (metaText) parts.push(metaText);
-        sink(parts.join(" "));
+        sink(logParts(levelLabels[level], componentValue, timestamps, namespace, message, meta).join(" "));
     }
-
     function isDebugEnabled(namespace) {
         if (patterns.length === 0) return false;
         return patterns.some((pattern) => pattern.test(namespace));
@@ -178,46 +171,58 @@ function createLogger({
         }
     };
 }
-
+function logParts(levelLabel, componentValue, timestamps, namespace, message, meta) {
+    const parts = [];
+    if (timestamps) parts.push(formatTimestamp());
+    parts.push(levelLabel, componentValue || "-", formatLogMessage(namespace, message));
+    const metaText = formatLogMeta(meta);
+    if (metaText) parts.push(metaText);
+    return parts;
+}
+function formatLogMessage(namespace, message) {
+    return namespace ? `${namespace} ${message}` : message;
+}
 function parseArgs(argv) {
     const result = {
         config: path.resolve(process.cwd(), "config.json"),
         standalone: false,
         workers: null
     };
-
     for (let index = 0; index < argv.length; index += 1) {
-        const arg = argv[index];
-        if (arg === "--standalone") {
-            result.standalone = true;
-            continue;
-        }
-        if (arg === "--config" && argv[index + 1]) {
-            result.config = path.resolve(process.cwd(), argv[index + 1]);
-            index += 1;
-            continue;
-        }
-        if (arg.startsWith("--config=")) {
-            result.config = path.resolve(process.cwd(), arg.slice("--config=".length));
-            continue;
-        }
-        if (arg === "--workers" && argv[index + 1]) {
-            result.workers = Number.parseInt(argv[index + 1], 10);
-            index += 1;
-            continue;
-        }
-        if (arg.startsWith("--workers=")) {
-            result.workers = Number.parseInt(arg.slice("--workers=".length), 10);
-        }
+        index += parseArg(argv, index, result);
     }
-
-    if (result.workers !== null && (!Number.isInteger(result.workers) || result.workers <= 0)) {
-        throw new Error(`Invalid worker count: ${result.workers}`);
-    }
-
+    validateWorkerCount(result.workers);
     return result;
 }
-
+function validateWorkerCount(workers) {
+    if (workers === null) return;
+    if (!Number.isInteger(workers)) throw new Error(`Invalid worker count: ${workers}`);
+    if (workers <= 0) throw new Error(`Invalid worker count: ${workers}`);
+}
+function parseArg(argv, index, result) {
+    const arg = argv[index];
+    const equalsIndex = arg.indexOf("=");
+    if (equalsIndex >= 0) return parseInlineArg(arg, equalsIndex, result);
+    const handler = ARG_HANDLERS[arg];
+    if (!handler) return 0;
+    if (arg === "--standalone") {
+        handler(result);
+        return 0;
+    }
+    return parseNextArg(handler, argv[index + 1], result);
+}
+function parseInlineArg(arg, equalsIndex, result) {
+    const name = arg.slice(0, equalsIndex);
+    if (name === "--standalone") return 0;
+    const handler = ARG_HANDLERS[name];
+    if (!handler) return 0;
+    handler(result, arg.slice(equalsIndex + 1));
+    return 0;
+}
+function parseNextArg(handler, value, result) {
+    if (!value) return 0;
+    return handler(result, value) ? 1 : 0;
+}
 function loadJsonFile(filePath) {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -226,27 +231,48 @@ function resolvePath(baseDir, value) {
     if (!value) return value;
     return path.isAbsolute(value) ? value : path.resolve(baseDir, value);
 }
-
 function normalizePoolConfig(poolConfig) {
     const { ["algo-min-time"]: _ignored, ...remainingPoolConfig } = poolConfig;
-    const algo = Array.isArray(poolConfig.algo) ? poolConfig.algo : (poolConfig.algo ? [poolConfig.algo] : DEFAULT_ALGO);
     const rawAlgoMinTime = poolConfig.algo_min_time ?? poolConfig["algo-min-time"];
-
     return {
         ...remainingPoolConfig,
         keepAlive: poolConfig.keepAlive !== false,
         allowSelfSignedSSL: poolConfig.allowSelfSignedSSL === true,
         default: poolConfig.default === true,
         devPool: poolConfig.devPool === true,
-        algo,
-        algo_perf: poolConfig.algo_perf && typeof poolConfig.algo_perf === "object"
-            ? poolConfig.algo_perf
-            : DEFAULT_ALGO_PERF,
+        algo: normalizeAlgoList(poolConfig.algo),
+        algo_perf: objectOrDefault(poolConfig.algo_perf, DEFAULT_ALGO_PERF),
         blob_type: poolConfig.blob_type || "cryptonote",
         algo_min_time: rawAlgoMinTime === undefined ? undefined : Number(rawAlgoMinTime)
     };
 }
-
+function normalizeAlgoList(algo) {
+    if (Array.isArray(algo)) return algo;
+    if (!algo) return DEFAULT_ALGO;
+    return [algo];
+}
+function objectOrDefault(value, defaultValue) {
+    return value && typeof value === "object" ? value : defaultValue;
+}
+function normalizeAccessControl(rawAccessControl, configDir) {
+    if (!rawAccessControl || typeof rawAccessControl !== "object") {
+        return { enabled: false, controlFile: resolvePath(configDir, "accessControl.json") };
+    }
+    return {
+        enabled: rawAccessControl.enabled === true,
+        controlFile: resolvePath(configDir, rawAccessControl.controlFile || "accessControl.json")
+    };
+}
+function normalizeTls(rawTls, configDir) {
+    const tls = isPlainObject(rawTls) ? rawTls : {};
+    return {
+        keyPath: resolvePath(configDir, tls.keyPath || "cert.key"),
+        certPath: resolvePath(configDir, tls.certPath || "cert.pem")
+    };
+}
+function normalizeList(rawList, mapper) {
+    return Array.isArray(rawList) ? rawList.map(mapper) : [];
+}
 function normalizePortConfig(portConfig) {
     return {
         ...portConfig,
@@ -275,87 +301,95 @@ function normalizeConfig(rawConfig, configPath) {
     if (rawDifficultySettings === undefined && legacyCoinSettings !== undefined) {
         throw new Error("config.coinSettings is no longer supported; rename it to difficultySettings and update your config");
     }
-
     const configDir = path.dirname(configPath);
-    const pools = Array.isArray(rawConfig.pools) ? rawConfig.pools.map((poolConfig) => normalizePoolConfig(poolConfig)) : [];
-    const listeningPorts = Array.isArray(rawConfig.listeningPorts)
-        ? rawConfig.listeningPorts.map((portConfig) => normalizePortConfig(portConfig))
-        : [];
-
+    const pools = normalizeList(rawConfig.pools, normalizePoolConfig);
+    const listeningPorts = normalizeList(rawConfig.listeningPorts, normalizePortConfig);
     const config = {
         ...remainingConfig,
         pools,
         listeningPorts,
-        accessControl: rawConfig.accessControl && typeof rawConfig.accessControl === "object"
-            ? {
-                enabled: rawConfig.accessControl.enabled === true,
-                controlFile: resolvePath(configDir, rawConfig.accessControl.controlFile || "accessControl.json")
-            }
-            : { enabled: false, controlFile: resolvePath(configDir, "accessControl.json") },
-        bindAddress: rawConfig.bindAddress || "0.0.0.0",
+        accessControl: normalizeAccessControl(rawConfig.accessControl, configDir),
+        ...normalizeGeneralConfig(rawConfig),
+        tls: normalizeTls(rawConfig.tls, configDir),
+        difficultySettings: normalizeDifficultySettings(rawDifficultySettings)
+    };
+    validateConfig(config);
+    return config;
+}
+function normalizeGeneralConfig(rawConfig) {
+    return {
+        ...normalizeHttpConfig(rawConfig),
+        ...normalizeRuntimeConfig(rawConfig),
+        developerShare: Number(rawConfig.developerShare ?? 0),
+        addressWorkerID: rawConfig.addressWorkerID === true,
+        keepOfflineMiners: isEnabledNumber(rawConfig.keepOfflineMiners)
+    };
+}
+function normalizeHttpConfig(rawConfig) {
+    return {
         httpEnable: rawConfig.httpEnable === true,
         httpAddress: rawConfig.httpAddress || "127.0.0.1",
         httpPort: Number(rawConfig.httpPort ?? 8081),
         refreshTime: Number(rawConfig.refreshTime ?? 30),
-        theme: rawConfig.theme || "light",
-        developerShare: Number(rawConfig.developerShare ?? 0),
-        addressWorkerID: rawConfig.addressWorkerID === true,
-        minerInactivityTime: Number(rawConfig.minerInactivityTime ?? 120),
-        keepOfflineMiners: rawConfig.keepOfflineMiners === true || Number(rawConfig.keepOfflineMiners || 0) > 0,
-        socketTimeoutMs: Number(rawConfig.socketTimeoutMs ?? 180000),
-        maxJsonLineBytes: Number(rawConfig.maxJsonLineBytes ?? MAX_JSON_LINE_BYTES),
-        tls: rawConfig.tls && typeof rawConfig.tls === "object"
-            ? {
-                keyPath: resolvePath(configDir, rawConfig.tls.keyPath || "cert.key"),
-                certPath: resolvePath(configDir, rawConfig.tls.certPath || "cert.pem")
-            }
-            : {
-                keyPath: resolvePath(configDir, "cert.key"),
-                certPath: resolvePath(configDir, "cert.pem")
-            },
-        difficultySettings: normalizeDifficultySettings(rawDifficultySettings)
+        theme: normalizeTheme(rawConfig.theme)
     };
-
-    validateConfig(config);
-    return config;
 }
-
+function normalizeTheme(theme) {
+    return theme || "light";
+}
+function normalizeRuntimeConfig(rawConfig) {
+    return {
+        bindAddress: normalizeBindAddress(rawConfig.bindAddress),
+        minerInactivityTime: Number(rawConfig.minerInactivityTime ?? 120),
+        socketTimeoutMs: Number(rawConfig.socketTimeoutMs ?? 180000),
+        maxJsonLineBytes: Number(rawConfig.maxJsonLineBytes ?? MAX_JSON_LINE_BYTES)
+    };
+}
+function normalizeBindAddress(bindAddress) {
+    return bindAddress || "0.0.0.0";
+}
 function validateConfig(config) {
-    if (!Array.isArray(config.pools) || config.pools.length === 0) {
-        throw new Error("config.pools must contain at least one pool");
-    }
-    if (!Array.isArray(config.listeningPorts) || config.listeningPorts.length === 0) {
-        throw new Error("config.listeningPorts must contain at least one listening port");
-    }
-
+    validateRequiredList(config.pools, "config.pools must contain at least one pool");
+    validateRequiredList(config.listeningPorts, "config.listeningPorts must contain at least one listening port");
+    validatePools(config.pools);
+    validateDifficultySettings(config.difficultySettings);
+    validateListeningPorts(config.listeningPorts);
+}
+function validateRequiredList(value, message) {
+    if (!Array.isArray(value) || value.length === 0) throw new Error(message);
+}
+function validatePools(pools) {
     let hasDefaultPool = false;
-    for (const pool of config.pools) {
-        if (!pool.hostname || !Number.isInteger(Number(pool.port))) {
-            throw new Error(`Invalid pool entry: ${JSON.stringify(pool)}`);
-        }
-        if (pool.algo_min_time !== undefined && (!Number.isFinite(pool.algo_min_time) || pool.algo_min_time < 0)) {
-            throw new Error(`Invalid pool algo-min-time: ${JSON.stringify(pool)}`);
-        }
-        if (pool.default && !pool.devPool) hasDefaultPool = true;
+    for (const pool of pools) {
+        validatePool(pool);
+        if (isDefaultUserPool(pool)) hasDefaultPool = true;
     }
-
     if (!hasDefaultPool) {
         throw new Error("config.pools must contain at least one default non-dev pool");
     }
-
-    if (
-        !Number.isFinite(config.difficultySettings.minDiff)
-        || !Number.isFinite(config.difficultySettings.maxDiff)
-        || !Number.isFinite(config.difficultySettings.shareTargetTime)
-        || config.difficultySettings.minDiff <= 0
-        || config.difficultySettings.maxDiff <= 0
-        || config.difficultySettings.shareTargetTime <= 0
-        || config.difficultySettings.minDiff > config.difficultySettings.maxDiff
-    ) {
-        throw new Error(`Invalid difficultySettings: ${JSON.stringify(config.difficultySettings)}`);
+}
+function isDefaultUserPool(pool) {
+    return pool.default && !pool.devPool;
+}
+function validatePool(pool) {
+    if (!pool.hostname || !Number.isInteger(Number(pool.port))) throw new Error(`Invalid pool entry: ${JSON.stringify(pool)}`);
+    if (invalidAlgoMinTime(pool)) throw new Error(`Invalid pool algo-min-time: ${JSON.stringify(pool)}`);
+}
+function invalidAlgoMinTime(pool) {
+    if (pool.algo_min_time === undefined) return false;
+    return invalidNonNegativeNumber(pool.algo_min_time);
+}
+function validateDifficultySettings(settings) {
+    if (!validDifficultySettings(settings)) {
+        throw new Error(`Invalid difficultySettings: ${JSON.stringify(settings)}`);
     }
-
-    for (const portConfig of config.listeningPorts) {
+}
+function validDifficultySettings(settings) {
+    return [settings.minDiff, settings.maxDiff, settings.shareTargetTime].every((value) => Number.isFinite(value) && value > 0)
+        && settings.minDiff <= settings.maxDiff;
+}
+function validateListeningPorts(listeningPorts) {
+    for (const portConfig of listeningPorts) {
         if (!Number.isInteger(Number(portConfig.port)) && portConfig.port !== 0) {
             throw new Error(`Invalid listening port: ${JSON.stringify(portConfig)}`);
         }
@@ -374,12 +408,9 @@ class AccessControl {
         const stats = fs.statSync(this.config.accessControl.controlFile);
         return `${stats.mtimeMs}:${stats.size}`;
     }
-
     loadEntries(signature, loadedAt = Date.now()) {
         const rawEntries = loadJsonFile(this.config.accessControl.controlFile);
-        if (!rawEntries || typeof rawEntries !== "object" || Array.isArray(rawEntries)) {
-            throw new Error("access control file must contain a JSON object");
-        }
+        if (!isPlainObject(rawEntries)) throw new Error("access control file must contain a JSON object");
         this.entries = rawEntries;
         this.fileSignature = signature ?? this.getControlFileSignature();
         this.lastLoadedAt = loadedAt;
@@ -392,13 +423,18 @@ class AccessControl {
     reloadIfNeeded(force = false) {
         if (!this.config.accessControl.enabled) return;
         const now = Date.now();
-        if (!force && now - this.lastLoadedAt < ACCESS_CONTROL_REFRESH_MS) return;
+        if (this.skipAccessReload(force, now)) return;
         this.lastLoadedAt = now;
         const signature = this.getControlFileSignature();
-        if (!force && signature === this.fileSignature) return;
+        if (this.skipUnchangedAccessReload(force, signature)) return;
         this.loadEntries(signature, now);
     }
-
+    skipAccessReload(force, now) {
+        return !force && now - this.lastLoadedAt < ACCESS_CONTROL_REFRESH_MS;
+    }
+    skipUnchangedAccessReload(force, signature) {
+        return !force && signature === this.fileSignature;
+    }
     reloadIfChangedAfterMiss() {
         if (!this.config.accessControl.enabled) return;
         const signature = this.getControlFileSignature();
@@ -421,12 +457,12 @@ function randomId() {
     const randomValue = BigInt(`0x${crypto.randomBytes(8).toString("hex")}`) % span;
     return String(min + randomValue);
 }
-
 function humanHashrate(hashes, algo = "h/s") {
-    const unit = algo === "c29s" || algo === "c29v" ? "G" : "H";
-    let adjusted = hashes || 0;
-    if (algo === "c29s") adjusted *= 32;
-    if (algo === "c29v") adjusted *= 16;
+    const c29Multiplier = C29_HASHRATE_MULTIPLIERS.get(algo);
+    const adjusted = (hashes || 0) * (c29Multiplier || 1);
+    return formatHashrateValue(adjusted, c29Multiplier ? "G" : "H");
+}
+function formatHashrateValue(adjusted, unit) {
     const thresholds = [
         [1_000_000_000_000, "T"],
         [1_000_000_000, "G"],
@@ -444,29 +480,28 @@ function humanHashrate(hashes, algo = "h/s") {
 function isPoolUsable(pools, hostname, isReady) {
     const pool = pools.get(hostname);
     if (!pool || !isReady(pool)) return false;
-
-    let topHeight = 0;
-    for (const candidate of pools.values()) {
-        if (!isReady(candidate)) continue;
-        if (Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) > 1000) continue;
-        topHeight = Math.max(topHeight, candidate.activeBlockTemplate.height);
-    }
+    const topHeight = getComparableTopHeight(pools, pool, isReady);
     return pool.activeBlockTemplate.height >= topHeight - 5;
 }
-
+function getComparableTopHeight(pools, pool, isReady) {
+    let topHeight = 0;
+    for (const candidate of pools.values()) {
+        if (isComparablePool(candidate, pool, isReady)) topHeight = Math.max(topHeight, candidate.activeBlockTemplate.height);
+    }
+    return topHeight;
+}
+function isComparablePool(candidate, pool, isReady) {
+    return isReady(candidate) && Math.abs(candidate.activeBlockTemplate.height - pool.activeBlockTemplate.height) <= 1000;
+}
 function formatRelativeSeconds(timestampSeconds) {
     if (!timestampSeconds) return "never";
     const seconds = Math.max(0, Math.floor((Date.now() / 1000) - timestampSeconds));
-    if (seconds < 60) return `${seconds}s ago`;
-    const minutes = Math.floor(seconds / 60);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return `${Math.floor(hours / 24)}d ago`;
+    return `${formatSeconds(seconds)} ago`;
 }
-
 function formatDurationMs(durationMs) {
-    const seconds = Math.max(0, Math.floor(durationMs / 1000));
+    return formatSeconds(Math.max(0, Math.floor(durationMs / 1000)));
+}
+function formatSeconds(seconds) {
     if (seconds < 60) return `${seconds}s`;
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m`;
@@ -502,13 +537,7 @@ function createLineParser({ maxBufferBytes = MAX_JSON_LINE_BYTES, onLine, onOver
                 if (typeof onOverflow === "function") onOverflow();
                 return false;
             }
-            let index = buffer.indexOf("\n");
-            while (index !== -1) {
-                const line = buffer.slice(0, index).trim();
-                buffer = buffer.slice(index + 1);
-                if (line) onLine(line);
-                index = buffer.indexOf("\n");
-            }
+            buffer = flushJsonLines(buffer, onLine);
             return true;
         },
         clear() {
@@ -516,7 +545,28 @@ function createLineParser({ maxBufferBytes = MAX_JSON_LINE_BYTES, onLine, onOver
         }
     };
 }
-
+function flushJsonLines(buffer, onLine) {
+    let index = buffer.indexOf("\n");
+    while (index !== -1) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        if (line) onLine(line);
+        index = buffer.indexOf("\n");
+    }
+    return buffer;
+}
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function isBlank(value) {
+    return value === undefined || value === null || value === "";
+}
+function isEnabledNumber(value) {
+    return value === true || Number(value || 0) > 0;
+}
+function invalidNonNegativeNumber(value) {
+    return !Number.isFinite(value) || value < 0;
+}
 function respondToHttpProbe(socket, line) {
     if (!line.startsWith("GET /")) return false;
     if (line.includes("HTTP/1.1")) {
@@ -547,29 +597,4 @@ function bigIntToBufferBE(value, size) {
     return Buffer.from(hex, "hex");
 }
 
-module.exports = {
-    AccessControl,
-    CircularBuffer,
-    DEFAULT_ALGO,
-    DEFAULT_ALGO_PERF,
-    HTTP_OK_RESPONSE,
-    MAX_JSON_LINE_BYTES,
-    PROXY_VERSION,
-    bigIntToBufferBE,
-    bufferToBigIntLE,
-    createLineParser,
-    createLogger,
-    escapeHtml,
-    formatDurationMs,
-    formatRelativeSeconds,
-    humanHashrate,
-    isPoolUsable,
-    loadJsonFile,
-    maybeUnref,
-    normalizeConfig,
-    parseArgs,
-    randomId,
-    respondToHttpProbe,
-    safeEqual,
-    writeJsonLine
-};
+module.exports = { AccessControl, CircularBuffer, DEFAULT_ALGO, DEFAULT_ALGO_PERF, HTTP_OK_RESPONSE, MAX_JSON_LINE_BYTES, PROXY_VERSION, bigIntToBufferBE, bufferToBigIntLE, createLineParser, createLogger, escapeHtml, formatDurationMs, formatRelativeSeconds, humanHashrate, isPoolUsable, loadJsonFile, maybeUnref, normalizeConfig, parseArgs, randomId, respondToHttpProbe, safeEqual, writeJsonLine };

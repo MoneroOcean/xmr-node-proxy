@@ -6,7 +6,8 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { AccessControl, createLogger, normalizeConfig } = require("../proxy/common");
+const { AccessControl, createLogger, humanHashrate, normalizeConfig, parseArgs } = require("../proxy/common");
+const { collectWorkerStats } = require("../proxy/stats");
 
 test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
     test("createLogger can omit timestamps when requested", () => {
@@ -151,5 +152,101 @@ test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
                 }
             }
         }, path.join(os.tmpdir(), "config.json")), /rename it to difficultySettings and update your config/);
+    });
+
+    test("parseArgs preserves inline values and ignores invalid flag forms like the legacy parser", () => {
+        const configPath = "configs/pool=a.json";
+        const parsed = parseArgs([
+            "--config",
+            "",
+            "--workers",
+            "",
+            "--standalone=true",
+            `--config=${configPath}`,
+            "--standalone"
+        ]);
+
+        assert.equal(parsed.config, path.resolve(process.cwd(), configPath));
+        assert.equal(parsed.workers, null);
+        assert.equal(parsed.standalone, true);
+        assert.throws(() => parseArgs(["--workers="]), /Invalid worker count: NaN/);
+    });
+
+    test("normalizeConfig keeps legacy falsy algo defaults and object-like algo_perf", () => {
+        const algoPerf = ["rx/0"];
+        const config = normalizeConfig({
+            pools: [
+                {
+                    hostname: "pool.example.com",
+                    port: 3333,
+                    default: true,
+                    algo: 0,
+                    algo_perf: algoPerf
+                }
+            ],
+            listeningPorts: [
+                { port: 4444, diff: 100 }
+            ]
+        }, path.join(os.tmpdir(), "config.json"));
+
+        assert.deepEqual(config.pools[0].algo, ["rx/0"]);
+        assert.equal(config.pools[0].algo_perf, algoPerf);
+    });
+
+    test("humanHashrate treats prototype property names as normal algorithm labels", () => {
+        assert.equal(humanHashrate(1, "constructor"), "1.00 H/s");
+    });
+
+    test("collectWorkerStats only drops missing or stale miners", () => {
+        const workerState = {
+            stats: new Map([
+                ["missing", undefined],
+                ["missing-time", {
+                    active: true,
+                    avgSpeed: 5,
+                    diff: 10,
+                    hashes: 20,
+                    pool: "alpha"
+                }],
+                ["stale", {
+                    active: true,
+                    avgSpeed: 7,
+                    diff: 11,
+                    hashes: 22,
+                    lastContact: 50,
+                    pool: "alpha"
+                }],
+                ["fresh", {
+                    active: true,
+                    avgSpeed: 13,
+                    diff: 17,
+                    hashes: 26,
+                    lastContact: 150,
+                    pool: "alpha"
+                }]
+            ])
+        };
+        const pool = {
+            defaultAlgoSet: { "rx/0": 1 },
+            defaultAlgosPerf: { "rx/0": 1 },
+            updateAlgoPerf(algos, perf) {
+                this.algos = algos;
+                this.perf = perf;
+            }
+        };
+
+        const result = collectWorkerStats({
+            inactivityDeadline: 100,
+            logger: { debug() {} },
+            pools: new Map([["alpha", pool]]),
+            workers: new Map([["worker-1", workerState]])
+        });
+
+        assert.equal(workerState.stats.has("missing"), false);
+        assert.equal(workerState.stats.has("missing-time"), true);
+        assert.equal(workerState.stats.has("stale"), false);
+        assert.equal(workerState.stats.has("fresh"), true);
+        assert.equal(result.globalStats.miners, 2);
+        assert.equal(result.globalStats.hashRate, 18);
     });
 });

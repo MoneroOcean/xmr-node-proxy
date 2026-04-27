@@ -4,12 +4,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const tls = require("node:tls");
 
-const {
-    AccessControl,
-    CircularBuffer,
-    isPoolUsable: resolvePoolUsability,
-    maybeUnref,
-} = require("./common");
+const { AccessControl, CircularBuffer, isPoolUsable: resolvePoolUsability, maybeUnref } = require("./common");
 const { MinerProtocol } = require("./miner");
 
 class WorkerController {
@@ -40,24 +35,29 @@ class WorkerController {
         this.failoverTimer = maybeUnref(setInterval(() => this.checkActivePools(), 90_000));
         this.sendToMaster({ type: "needPoolState" });
     }
-
     async stop() {
-        if (this.updateDiffTimer) clearInterval(this.updateDiffTimer);
-        if (this.publishStatsTimer) clearInterval(this.publishStatsTimer);
-        if (this.failoverTimer) clearInterval(this.failoverTimer);
+        this.stopTimers();
+        await this.stopServers();
+        this.stopMiners();
+    }
+    stopTimers() {
+        for (const timer of [this.updateDiffTimer, this.publishStatsTimer, this.failoverTimer]) clearTimer(timer);
         this.updateDiffTimer = null;
         this.publishStatsTimer = null;
         this.failoverTimer = null;
-
+    }
+    async stopServers() {
         for (const serverInfo of this.servers) {
             await new Promise((resolve) => serverInfo.server.close(resolve));
         }
         this.servers = [];
+    }
+    stopMiners() {
         for (const miner of this.activeMiners.values()) {
             try {
                 miner.socket.destroy();
             } catch (_error) {
-                // Best effort cleanup.
+                // Ignore socket destroy failures while shutting down miners.
             }
         }
         this.activeMiners.clear();
@@ -66,16 +66,13 @@ class WorkerController {
     loadPools() {
         for (const poolConfig of this.config.pools) {
             this.ensurePool(poolConfig);
-            if (poolConfig.default) {
-                this.defaultPool = poolConfig.hostname;
-            }
+            if (poolConfig.default) this.defaultPool = poolConfig.hostname;
         }
-
-        if (this.config.developerShare > 0 && !this.pools.has(this.coins.devPool.hostname)) {
-            this.ensurePool(this.coins.devPool);
-        }
+        if (this.shouldUseDevPool()) this.ensurePool(this.coins.devPool);
     }
-
+    shouldUseDevPool() {
+        return this.config.developerShare > 0 && !this.pools.has(this.coins.devPool.hostname);
+    }
     ensurePool(poolConfig) {
         if (this.pools.has(poolConfig.hostname)) return this.pools.get(poolConfig.hostname);
         // Workers do miner-facing validation locally, so they must build the same
@@ -112,60 +109,70 @@ class WorkerController {
     chooseInitialPool() {
         const defaultPool = this.defaultPool;
         if (defaultPool && this.isPoolUsable(defaultPool)) return defaultPool;
-        for (const [hostname, pool] of this.pools) {
-            if (pool.devPool) continue;
-            if (this.isPoolUsable(hostname)) return hostname;
-        }
-        return defaultPool || null;
+        const activePool = Array.from(this.pools).find(([hostname, pool]) => this.isUsableUserPool(hostname, pool));
+        if (activePool) return activePool[0];
+        return defaultPool;
     }
-
+    isUsableUserPool(hostname, pool) {
+        return !pool.devPool && this.isPoolUsable(hostname);
+    }
     handleMasterMessage(message) {
         if (!message || typeof message !== "object") return;
-        switch (message.type) {
-        case "poolState":
-            for (const hostname of message.data) {
-                const pool = this.pools.get(hostname);
-                if (pool) pool.active = true;
-            }
-            return;
-        case "newBlockTemplate": {
-            const pool = this.pools.get(message.host);
-            if (!pool) return;
-            if (pool.activeBlockTemplate) {
-                pool.pastBlockTemplates.enq(pool.activeBlockTemplate);
-            }
-            pool.active = true;
-            pool.activeBlockTemplate = new pool.coins.BlockTemplate(message.data);
-            for (const miner of this.activeMiners.values()) {
-                if (miner.pool === message.host) miner.pushNewJob();
-            }
-            return;
-        }
-        case "changePool": {
-            const miner = this.activeMiners.get(message.worker);
-            if (!miner || !this.pools.has(message.pool)) return;
-            miner.pool = message.pool;
-            miner.pushNewJob(true);
-            return;
-        }
-        case "disablePool": {
-            const pool = this.pools.get(message.pool);
-            if (!pool) return;
-            pool.active = false;
-            this.checkActivePools();
-            return;
-        }
-        case "enablePool": {
-            const pool = this.pools.get(message.pool);
-            if (!pool) return;
-            pool.active = true;
-            return;
-        }
-        default:
-            this.logger.debug("worker", `Ignoring master message ${message.type}`);
+        const handled = [
+            () => this.applyPoolState(message),
+            () => this.applyNewBlockTemplate(message),
+            () => this.applyPoolChange(message),
+            () => this.applyPoolActiveFlag(message)
+        ].some((handler) => handler());
+        if (!handled) this.logger.debug("worker", `Ignoring master message ${message.type}`);
+    }
+    applyPoolState(message) {
+        if (message.type !== "poolState") return false;
+        for (const hostname of message.data) this.setPoolActive(hostname, true);
+        return true;
+    }
+    applyNewBlockTemplate(message) {
+        if (message.type !== "newBlockTemplate") return false;
+        const pool = this.pools.get(message.host);
+        if (!pool) return true;
+        this.setNewBlockTemplate(pool, message.data);
+        this.pushPoolJobs(message.host);
+        return true;
+    }
+    setNewBlockTemplate(pool, data) {
+        if (pool.activeBlockTemplate) pool.pastBlockTemplates.enq(pool.activeBlockTemplate);
+        pool.active = true;
+        pool.activeBlockTemplate = new pool.coins.BlockTemplate(data);
+    }
+    pushPoolJobs(hostname) {
+        for (const miner of this.activeMiners.values()) {
+            if (miner.pool === hostname) miner.pushNewJob();
         }
     }
-
+    applyPoolChange(message) {
+        if (message.type !== "changePool") return false;
+        const miner = this.activeMiners.get(message.worker);
+        if (!miner || !this.pools.has(message.pool)) return true;
+        miner.pool = message.pool;
+        miner.pushNewJob(true);
+        return true;
+    }
+    applyPoolActiveFlag(message) {
+        if (message.type === "enablePool") {
+            this.setPoolActive(message.pool, true);
+            return true;
+        }
+        if (message.type !== "disablePool") return false;
+        const handled = this.setPoolActive(message.pool, false);
+        if (handled) this.checkActivePools();
+        return true;
+    }
+    setPoolActive(hostname, active) {
+        const pool = this.pools.get(hostname);
+        if (!pool) return false;
+        pool.active = active;
+        return true;
+    }
     startServers() {
         for (const portData of this.config.listeningPorts) {
             const handler = (socket) => this.protocol.attachSocket(socket, portData);
@@ -229,20 +236,26 @@ class WorkerController {
     checkActivePools() {
         const reassignedMiners = [];
         for (const [hostname, pool] of this.pools) {
-            if (pool.active) continue;
-            const fallbackHost = this.chooseInitialPool();
-            if (!fallbackHost || fallbackHost === hostname) continue;
-            for (const miner of this.activeMiners.values()) {
-                if (miner.pool !== hostname) continue;
-                miner.pool = fallbackHost;
-                reassignedMiners.push(miner);
-                this.reportMinerStat(miner.id, miner);
-            }
+            this.reassignInactivePool(hostname, pool, reassignedMiners);
         }
         for (const miner of reassignedMiners) miner.pushNewJob(true);
     }
+    reassignInactivePool(hostname, pool, reassignedMiners) {
+        if (pool.active) return;
+        const fallbackHost = this.chooseInitialPool();
+        if (!fallbackHost || fallbackHost === hostname) return;
+        this.reassignPoolMiners(hostname, fallbackHost, reassignedMiners);
+    }
+    reassignPoolMiners(hostname, fallbackHost, reassignedMiners) {
+        for (const miner of this.activeMiners.values()) {
+            if (miner.pool !== hostname) continue;
+            miner.pool = fallbackHost;
+            reassignedMiners.push(miner);
+            this.reportMinerStat(miner.id, miner);
+        }
+    }
 }
-
-module.exports = {
-    WorkerController
-};
+module.exports = { WorkerController };
+function clearTimer(timer) {
+    if (timer) clearInterval(timer);
+}

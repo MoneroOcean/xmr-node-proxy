@@ -232,6 +232,43 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
         });
     });
 
+    test("worker ignores disablePool for unknown pools without running failover", async () => {
+        await withHarness("worker ignores disablePool for unknown pools without running failover", {}, async (harness) => {
+            const worker = harness.app.getState().worker;
+            let failoverChecks = 0;
+            const originalCheckActivePools = worker.checkActivePools;
+            worker.checkActivePools = () => {
+                failoverChecks += 1;
+            };
+
+            try {
+                worker.handleMasterMessage({ type: "disablePool", pool: "missing-pool.invalid" });
+                worker.handleMasterMessage({ type: "enablePool", pool: "missing-pool.invalid" });
+                assert.equal(failoverChecks, 0);
+            } finally {
+                worker.checkActivePools = originalCheckActivePools;
+            }
+        });
+    });
+
+    test("prototype-named miner methods are treated as unknown RPC methods", async () => {
+        await withHarness("prototype-named miner methods are treated as unknown RPC methods", {}, async (harness) => {
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                const reply = await client.request({
+                    id: 35,
+                    method: "constructor",
+                    params: {}
+                });
+
+                assert.equal(reply.error.message, "Unknown method");
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
     test("access control reloads from disk and rejects unauthorized miners", async () => {
         await withHarness("access control reloads from disk and rejects unauthorized miners", {
             accessControlEnabled: true,

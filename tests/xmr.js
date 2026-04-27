@@ -4,6 +4,8 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const createCoins = require("../coins/core");
+const { createTemplateTools } = require("../coins/template");
+const { CircularBuffer } = require("../proxy/common");
 
 function createProxyTemplate(overrides = {}) {
     return {
@@ -64,5 +66,56 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
         assert.equal(accepted, false);
         assert.equal(warnings.some((message) => message === "share.low_diff"), true);
+    });
+
+    test("parseBlobType handles non-string objects without prototype lookups", () => {
+        const coins = createCoins({
+            instanceId: Buffer.from([1, 2, 3])
+        });
+
+        assert.equal(coins.parseBlobType("cryptonote_arq"), 16);
+        assert.equal(coins.parseBlobType(104), 104);
+        assert.equal(coins.parseBlobType({ toString: () => "cryptonote_arq" }), 0);
+        assert.equal(coins.parseBlobType("toString"), 0);
+    });
+
+    test("getJob preserves explicit algo for non-grin miners on grin blob types", () => {
+        const tools = createTemplateTools({
+            blobTypeGrin: () => true,
+            c29ProofSize: () => 32,
+            convertBlob: (buffer) => Buffer.from(buffer),
+            nonceSize: () => 4,
+            parseBlobType: () => 8
+        });
+        const template = new tools.BlockTemplate({
+            id: "template-grin",
+            blocktemplate_blob: Buffer.alloc(80).toString("hex"),
+            blob_type: "cuckaroo",
+            algo: "rx/test",
+            difficulty: 100,
+            height: 12,
+            reserved_offset: 0,
+            seed_hash: "00".repeat(32),
+            target_diff: 100,
+            worker_offset: 4
+        });
+        const miner = {
+            cachedJob: null,
+            difficulty: 10,
+            id: "miner-default",
+            newDiff: null,
+            protocol: "default",
+            validJobs: new CircularBuffer(5)
+        };
+        const grinMiner = {
+            ...miner,
+            cachedJob: null,
+            id: "miner-grin",
+            protocol: "grin",
+            validJobs: new CircularBuffer(5)
+        };
+
+        assert.equal(tools.getJob(miner, template, true).algo, "rx/test");
+        assert.equal(tools.getJob(grinMiner, template, true).algo, "cuckaroo");
     });
 });

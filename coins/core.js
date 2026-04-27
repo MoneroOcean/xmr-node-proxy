@@ -1,22 +1,9 @@
 "use strict";
 
-const {
-    DEFAULT_ALGO,
-    DEFAULT_ALGO_PERF,
-} = require("../proxy/common");
+const { DEFAULT_ALGO, DEFAULT_ALGO_PERF } = require("../proxy/common");
 const { createAlgoTools } = require("./algos");
-const {
-    blobTypeGrin,
-    c29ProofSize,
-    constructNewBlob,
-    convertBlob,
-    nonceSize,
-    parseBlobType
-} = require("./blob");
-const {
-    createTemplateTools,
-    normalizeDifficulty
-} = require("./template");
+const { blobTypeGrin, c29ProofSize, constructNewBlob, convertBlob, nonceSize, parseBlobType } = require("./blob");
+const { createTemplateTools, normalizeDifficulty } = require("./template");
 const { createShareProcessor } = require("./share");
 
 function createCoins(options = {}) {
@@ -60,20 +47,7 @@ function createCoins(options = {}) {
         blob_type: "cryptonote"
     };
 
-    return {
-        BlockTemplate,
-        MasterBlockTemplate,
-        blobTypeGrin,
-        c29ProofSize,
-        convertBlob,
-        detectAlgo,
-        devPool,
-        getJob,
-        getMasterJob,
-        nonceSize,
-        parseBlobType,
-        processShare
-    };
+    return { BlockTemplate, MasterBlockTemplate, blobTypeGrin, c29ProofSize, convertBlob, detectAlgo, devPool, getJob, getMasterJob, nonceSize, parseBlobType, processShare };
 }
 
 module.exports = createCoins;

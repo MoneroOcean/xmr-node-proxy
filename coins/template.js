@@ -1,29 +1,20 @@
 "use strict";
 
-const {
-    CircularBuffer,
-    bigIntToBufferBE,
-    randomId
-} = require("../proxy/common");
+const { CircularBuffer, bigIntToBufferBE, randomId } = require("../proxy/common");
 const BASE_DIFF = (1n << 256n) - 1n;
-
 function normalizeDifficulty(value, fallback = 1) {
     // Some upstreams expose difficulty-like fields as floats or numeric strings
     // such as target_diff. Normalize once here so the rest of the coins logic can
     // safely use integer math and BigInt conversions.
     const numericValue = Number(value);
-    if (Number.isFinite(numericValue) && numericValue > 0) {
-        return Math.max(1, Math.floor(numericValue));
-    }
-
+    if (isPositiveFinite(numericValue)) return Math.max(1, Math.floor(numericValue));
     const fallbackValue = Number(fallback);
-    if (Number.isFinite(fallbackValue) && fallbackValue > 0) {
-        return Math.max(1, Math.floor(fallbackValue));
-    }
-
+    if (isPositiveFinite(fallbackValue)) return Math.max(1, Math.floor(fallbackValue));
     return 1;
 }
-
+function isPositiveFinite(value) {
+    return Number.isFinite(value) && value > 0;
+}
 function getTargetHex(difficulty, size) {
     const diff = BigInt(normalizeDifficulty(difficulty));
     const diffBuffer = bigIntToBufferBE(BASE_DIFF / diff, 32);
@@ -133,22 +124,16 @@ function createTemplateTools(options = {}) {
             miner.difficulty = normalizedMaxDiff;
         }
     }
-
-    function getJob(miner, activeBlockTemplate, bypassCache) {
-        if (
-            miner.validJobs.size() > 0
-            && miner.validJobs.get(0).templateID === activeBlockTemplate.id
-            && !miner.newDiff
-            && miner.cachedJob !== null
-            && bypassCache !== true
-        ) {
-            return miner.cachedJob;
-        }
-
-        const blob = activeBlockTemplate.nextBlob();
-        adjustMinerDiff(miner, activeBlockTemplate.targetDiff);
-
-        const newJob = {
+    function canReuseJob(miner, activeBlockTemplate, bypassCache) {
+        if (miner.validJobs.size() <= 0) return false;
+        if (miner.validJobs.get(0).templateID !== activeBlockTemplate.id) return false;
+        return canReuseCachedJob(miner, bypassCache);
+    }
+    function canReuseCachedJob(miner, bypassCache) {
+        return !miner.newDiff && miner.cachedJob !== null && bypassCache !== true;
+    }
+    function createJobRecord(miner, activeBlockTemplate) {
+        return {
             id: randomId(),
             blob_type: activeBlockTemplate.blob_type,
             extraNonce: activeBlockTemplate.workerNonce,
@@ -159,42 +144,49 @@ function createTemplateTools(options = {}) {
             submissions: [],
             templateID: activeBlockTemplate.id
         };
-
+    }
+    function buildGrinJob(miner, activeBlockTemplate, newJob, blob) {
+        return {
+            pre_pow: blob,
+            algo: "cuckaroo",
+            edgebits: 29,
+            proofsize: c29ProofSize(activeBlockTemplate.blob_type),
+            noncebytes: 4,
+            height: activeBlockTemplate.height,
+            job_id: newJob.id,
+            difficulty: miner.difficulty,
+            id: miner.id
+        };
+    }
+    function buildDefaultJob(miner, activeBlockTemplate, newJob, blob) {
+        const job = {
+            blob,
+            job_id: newJob.id,
+            height: activeBlockTemplate.height,
+            seed_hash: activeBlockTemplate.seed_hash,
+            target: newJob.diffHex,
+            id: miner.id
+        };
+        if (activeBlockTemplate.algo !== undefined && miner.protocol !== "grin") job.algo = activeBlockTemplate.algo;
+        return job;
+    }
+    function decorateJob(job, activeBlockTemplate, miner) {
+        if (activeBlockTemplate.variant !== undefined) job.variant = activeBlockTemplate.variant;
+        if (activeBlockTemplate.algo !== undefined && miner.protocol !== "grin") job.algo = activeBlockTemplate.algo;
+        return job;
+    }
+    function getJob(miner, activeBlockTemplate, bypassCache) {
+        if (canReuseJob(miner, activeBlockTemplate, bypassCache)) return miner.cachedJob;
+        const blob = activeBlockTemplate.nextBlob();
+        adjustMinerDiff(miner, activeBlockTemplate.targetDiff);
+        const newJob = createJobRecord(miner, activeBlockTemplate);
+        const cachedJob = blobTypeGrin(activeBlockTemplate.blob_type)
+            ? buildGrinJob(miner, activeBlockTemplate, newJob, blob)
+            : buildDefaultJob(miner, activeBlockTemplate, newJob, blob);
         miner.validJobs.enq(newJob);
-
-        if (blobTypeGrin(activeBlockTemplate.blob_type)) {
-            miner.cachedJob = {
-                pre_pow: blob,
-                algo: "cuckaroo",
-                edgebits: 29,
-                proofsize: c29ProofSize(activeBlockTemplate.blob_type),
-                noncebytes: 4,
-                height: activeBlockTemplate.height,
-                job_id: newJob.id,
-                difficulty: miner.difficulty,
-                id: miner.id
-            };
-        } else {
-            miner.cachedJob = {
-                blob,
-                job_id: newJob.id,
-                height: activeBlockTemplate.height,
-                seed_hash: activeBlockTemplate.seed_hash,
-                target: newJob.diffHex,
-                id: miner.id
-            };
-        }
-
-        if (activeBlockTemplate.variant !== undefined) {
-            miner.cachedJob.variant = activeBlockTemplate.variant;
-        }
-        if (activeBlockTemplate.algo !== undefined && miner.protocol !== "grin") {
-            miner.cachedJob.algo = activeBlockTemplate.algo;
-        }
-
+        miner.cachedJob = decorateJob(cachedJob, activeBlockTemplate, miner);
         return miner.cachedJob;
     }
-
     function getMasterJob(poolState, workerId) {
         const activeBlockTemplate = poolState.activeBlockTemplate;
         const workerBlob = activeBlockTemplate.blobForWorker();
@@ -233,16 +225,7 @@ function createTemplateTools(options = {}) {
         return workerData;
     }
 
-    return {
-        BlockTemplate: WorkerBlockTemplate,
-        MasterBlockTemplate,
-        getJob,
-        getMasterJob
-    };
+    return { BlockTemplate: WorkerBlockTemplate, MasterBlockTemplate, getJob, getMasterJob };
 }
 
-module.exports = {
-    createTemplateTools,
-    getTargetHex,
-    normalizeDifficulty
-};
+module.exports = { createTemplateTools, getTargetHex, normalizeDifficulty };

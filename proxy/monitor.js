@@ -2,14 +2,7 @@
 
 const http = require("node:http");
 
-const {
-    PROXY_VERSION,
-    escapeHtml,
-    formatDurationMs,
-    formatRelativeSeconds,
-    humanHashrate,
-    safeEqual
-} = require("./common");
+const { PROXY_VERSION, escapeHtml, formatDurationMs, formatRelativeSeconds, humanHashrate, safeEqual } = require("./common");
 
 class ProxyMonitor {
     constructor(options) {
@@ -18,33 +11,9 @@ class ProxyMonitor {
         this.runtime = options.runtime;
         this.server = null;
     }
-
     start() {
         if (!this.config.httpEnable || this.server) return;
-
-        this.server = http.createServer((request, response) => {
-            if (!this.authorizeRequest(request, response)) return;
-            switch (new URL(request.url, "http://localhost").pathname) {
-            case "/": {
-                const snapshot = this.runtime.getMonitorSnapshot();
-                response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-                response.end(this.renderHtml(snapshot));
-                return;
-            }
-            case "/json":
-                response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-                response.end(`${JSON.stringify(this.runtime.getMonitorRawState())}\r\n`);
-                return;
-            case "/snapshot":
-                response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-                response.end(JSON.stringify(this.runtime.getMonitorSnapshot(), null, 2));
-                return;
-            default:
-                response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-                response.end("Not found");
-            }
-        });
-
+        this.server = http.createServer((request, response) => this.handleRequest(request, response));
         this.server.listen(this.config.httpPort, this.config.httpAddress, () => {
             const address = this.server.address();
             this.logger.info("monitor.ready", {
@@ -53,75 +22,87 @@ class ProxyMonitor {
             });
         });
     }
-
+    handleRequest(request, response) {
+        if (!this.authorizeRequest(request, response)) return;
+        const pathname = new URL(request.url, "http://localhost").pathname;
+        const handler = {
+            "/": () => this.sendHtml(response),
+            "/json": () => this.sendJson(response, `${JSON.stringify(this.runtime.getMonitorRawState())}\r\n`),
+            "/snapshot": () => this.sendJson(response, JSON.stringify(this.runtime.getMonitorSnapshot(), null, 2))
+        }[pathname];
+        if (handler) handler();
+        else this.sendNotFound(response);
+    }
+    sendHtml(response) {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end(this.renderHtml(this.runtime.getMonitorSnapshot()));
+    }
+    sendJson(response, body) {
+        response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(body);
+    }
+    sendNotFound(response) {
+        response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        response.end("Not found");
+    }
     async stop() {
         if (!this.server) return;
         await new Promise((resolve) => this.server.close(resolve));
         this.server = null;
     }
-
     authorizeRequest(request, response) {
-        if (!this.config.httpUser && !this.config.httpPass) return true;
-        const header = request.headers.authorization;
-        if (!header || !header.startsWith("Basic ")) {
-            response.writeHead(401, { "WWW-Authenticate": "Basic realm=\"XNP\"" });
-            response.end("Unauthorized");
-            return false;
-        }
-
-        const encoded = header.slice("Basic ".length);
-        let username = "";
-        let password = "";
-        try {
-            const decoded = Buffer.from(encoded, "base64").toString("utf8");
-            [username = "", password = ""] = decoded.split(":");
-        } catch (_error) {
-            response.writeHead(400);
-            response.end("Malformed Authorization header");
-            return false;
-        }
-
-        const isUsernameValid = safeEqual(username, this.config.httpUser || "");
-        const isPasswordValid = safeEqual(password, this.config.httpPass || "");
-        if (!isUsernameValid || !isPasswordValid) {
-            response.writeHead(401, { "WWW-Authenticate": "Basic realm=\"XNP\"" });
-            response.end("Unauthorized");
-            return false;
-        }
+        if (!this.authRequired()) return true;
+        return this.authorizeBasicRequest(request, response);
+    }
+    authorizeBasicRequest(request, response) {
+        const credentials = this.readBasicCredentials(request, response);
+        if (!credentials) return false;
+        if (!this.credentialsMatch(credentials)) return this.rejectAuth(response);
         return true;
     }
-
+    readBasicCredentials(request, response) {
+        const header = request.headers.authorization;
+        if (!header || !header.startsWith("Basic ")) return this.rejectAuth(response);
+        const credentials = decodeBasicAuth(header);
+        if (!credentials) return this.rejectMalformedAuth(response);
+        return credentials;
+    }
+    rejectMalformedAuth(response) {
+        response.writeHead(400);
+        response.end("Malformed Authorization header");
+        return false;
+    }
+    authRequired() {
+        return Boolean(this.config.httpUser) || Boolean(this.config.httpPass);
+    }
+    rejectAuth(response) {
+        response.writeHead(401, { "WWW-Authenticate": "Basic realm=\"XNP\"" });
+        response.end("Unauthorized");
+        return false;
+    }
+    credentialsMatch({ username, password }) {
+        return safeEqual(username, this.config.httpUser || "") && safeEqual(password, this.config.httpPass || "");
+    }
     renderPoolCards(snapshot) {
-        return snapshot.pools.map((pool) => {
-            const algoLabel = pool.algo ? `, algo ${escapeHtml(pool.algo)}` : "";
-            const variantLabel = pool.variant ? `, variant ${escapeHtml(pool.variant)}` : "";
-            const dashboardUrl = pool.username && /moneroocean/i.test(pool.hostname || "")
-                ? `https://moneroocean.stream/#/dashboard?addr=${encodeURIComponent(pool.username)}`
-                : null;
-            const titleMarkup = dashboardUrl
-                ? [
-                    `<a class="pool-card__link" href="${escapeHtml(dashboardUrl)}"`,
-                    "target=\"_blank\" rel=\"noreferrer\"",
-                    `title="Open MoneroOcean dashboard">${escapeHtml(pool.hostname)}</a>`
-                ].join(" ")
-                : escapeHtml(pool.hostname);
-            return `
-                <section class="pool-card ${pool.active ? "pool-card--active" : "pool-card--inactive"}">
-                    <h3>${titleMarkup}</h3>
-                    <p>Upstream pool${pool.devPool ? " (dev)" : ""}</p>
+        return snapshot.pools.map((pool) => this.renderPoolCard(pool, snapshot.hashrateAlgo)).join("\n");
+    }
+    renderPoolCard(pool, hashrateAlgo) {
+        const view = createPoolCardView(pool, hashrateAlgo);
+        return `
+                <section class="${view.className}">
+                    <h3>${view.title}</h3>
+                    <p>${view.subtitle}</p>
                     <p>
-                        ${humanHashrate(pool.hashrate, snapshot.hashrateAlgo)} routed,
-                        ${escapeHtml(pool.percentage)}%
+                        ${view.hashrate} routed,
+                        ${view.percentage}%
                     </p>
                     <p>
-                        height ${escapeHtml(String(pool.height ?? "?"))},
-                        target ${escapeHtml(String(pool.targetDiff ?? "?"))}${algoLabel}${variantLabel}
+                        height ${view.height},
+                        target ${view.target}${view.algoLabel}${view.variantLabel}
                     </p>
                 </section>
             `;
-        }).join("\n");
     }
-
     renderTableCell(content, { sortValue = "", title = "" } = {}) {
         const sortAttr = ` data-sort-value="${escapeHtml(String(sortValue ?? ""))}"`;
         const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
@@ -131,32 +112,7 @@ class ProxyMonitor {
     renderMinerRows(snapshot) {
         const now = Date.now();
         return snapshot.miners.map((miner) => {
-            const hashrate = miner.active ? humanHashrate(miner.avgSpeed, miner.algo) : "offline";
-            const lastShare = formatRelativeSeconds(miner.lastShare);
-            const lastContact = formatRelativeSeconds(miner.lastContact);
-            const connected = formatDurationMs(now - miner.connectTime);
-            const agent = miner.agent || "";
-            const agentLabel = String(agent).split(/\s+/, 1)[0] || String(agent);
-            const agentMarkup = agent
-                ? [
-                    `<div class="tooltip" title="${escapeHtml(agent)}">`,
-                    `<span class="tooltip__label">${escapeHtml(agentLabel)}</span>`,
-                    `<span class="tooltiptext">${escapeHtml(agent)}</span>`,
-                    "</div>"
-                ].join("")
-                : "";
-            const cells = [
-                [escapeHtml(miner.logString), miner.logString, miner.logString],
-                [escapeHtml(hashrate), miner.active ? miner.avgSpeed : -1, hashrate],
-                [escapeHtml(String(miner.diff)), miner.diff, String(miner.diff)],
-                [escapeHtml(String(miner.shares)), miner.shares, String(miner.shares)],
-                [escapeHtml(String(miner.hashes)), miner.hashes, String(miner.hashes)],
-                [escapeHtml(lastShare), miner.lastShare, lastShare],
-                [escapeHtml(lastContact), miner.lastContact, lastContact],
-                [escapeHtml(connected), miner.connectTime, connected],
-                [escapeHtml(miner.pool), miner.pool, miner.pool],
-                [agentMarkup, agent, agent]
-            ];
+            const cells = minerRowCells(miner, now);
             return `<tr>${cells.map(([content, sortValue, title]) => this.renderTableCell(content, {
                 sortValue,
                 title
@@ -556,7 +512,80 @@ class ProxyMonitor {
 </html>`;
     }
 }
-
-module.exports = {
-    ProxyMonitor
-};
+function createPoolCardView(pool, hashrateAlgo) {
+    return {
+        className: `pool-card ${pool.active ? "pool-card--active" : "pool-card--inactive"}`,
+        title: renderPoolTitle(pool),
+        subtitle: poolSubtitle(pool),
+        hashrate: humanHashrate(pool.hashrate, hashrateAlgo),
+        percentage: escapeHtml(pool.percentage),
+        height: escapeHtml(String(pool.height ?? "?")),
+        target: escapeHtml(String(pool.targetDiff ?? "?")),
+        algoLabel: poolAlgoLabel(pool),
+        variantLabel: poolVariantLabel(pool)
+    };
+}
+function poolSubtitle(pool) {
+    return `Upstream pool${pool.devPool ? " (dev)" : ""}`;
+}
+function decodeBasicAuth(header) {
+    try {
+        const decoded = Buffer.from(header.slice("Basic ".length), "base64").toString("utf8");
+        const [username = "", password = ""] = decoded.split(":");
+        return { username, password };
+    } catch (_error) {
+        return null;
+    }
+}
+function renderPoolTitle(pool) {
+    const dashboardUrl = dashboardUrlForPool(pool);
+    if (!dashboardUrl) return escapeHtml(pool.hostname);
+    return [
+        `<a class="pool-card__link" href="${escapeHtml(dashboardUrl)}"`,
+        "target=\"_blank\" rel=\"noreferrer\"",
+        `title="Open MoneroOcean dashboard">${escapeHtml(pool.hostname)}</a>`
+    ].join(" ");
+}
+function dashboardUrlForPool(pool) {
+    if (!pool.username) return null;
+    if (!/moneroocean/i.test(pool.hostname || "")) return null;
+    return `https://moneroocean.stream/#/dashboard?addr=${encodeURIComponent(pool.username)}`;
+}
+function poolAlgoLabel(pool) {
+    if (!pool.algo) return "";
+    return `, algo ${escapeHtml(pool.algo)}`;
+}
+function poolVariantLabel(pool) {
+    if (!pool.variant) return "";
+    return `, variant ${escapeHtml(pool.variant)}`;
+}
+function renderAgent(agent) {
+    if (!agent) return "";
+    const agentLabel = String(agent).split(/\s+/, 1)[0] || String(agent);
+    return [
+        `<div class="tooltip" title="${escapeHtml(agent)}">`,
+        `<span class="tooltip__label">${escapeHtml(agentLabel)}</span>`,
+        `<span class="tooltiptext">${escapeHtml(agent)}</span>`,
+        "</div>"
+    ].join("");
+}
+function minerRowCells(miner, now) {
+    const hashrate = miner.active ? humanHashrate(miner.avgSpeed, miner.algo) : "offline";
+    const lastShare = formatRelativeSeconds(miner.lastShare);
+    const lastContact = formatRelativeSeconds(miner.lastContact);
+    const connected = formatDurationMs(now - miner.connectTime);
+    const agent = miner.agent || "";
+    return [
+        [escapeHtml(miner.logString), miner.logString, miner.logString],
+        [escapeHtml(hashrate), miner.active ? miner.avgSpeed : -1, hashrate],
+        [escapeHtml(String(miner.diff)), miner.diff, String(miner.diff)],
+        [escapeHtml(String(miner.shares)), miner.shares, String(miner.shares)],
+        [escapeHtml(String(miner.hashes)), miner.hashes, String(miner.hashes)],
+        [escapeHtml(lastShare), miner.lastShare, lastShare],
+        [escapeHtml(lastContact), miner.lastContact, lastContact],
+        [escapeHtml(connected), miner.connectTime, connected],
+        [escapeHtml(miner.pool), miner.pool, miner.pool],
+        [renderAgent(agent), agent, agent]
+    ];
+}
+module.exports = { ProxyMonitor };
