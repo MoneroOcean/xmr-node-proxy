@@ -30,7 +30,7 @@
     "xmr"
   ],
   "author": "MoneroOcean contributors",
-  "license": "GPL-3.0-or-later",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/MoneroOcean/xmr-node-proxy/issues"
   },
