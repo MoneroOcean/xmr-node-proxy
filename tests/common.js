@@ -6,10 +6,15 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { AccessControl, createLogger, humanHashrate, normalizeConfig, parseArgs } = require("../proxy/common");
+const { AccessControl, PROXY_VERSION, createLogger, humanHashrate, normalizeConfig, parseArgs } = require("../proxy/common");
+const packageJson = require("../package.json");
 const { collectWorkerStats } = require("../proxy/stats");
 
 test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
+    test("runtime proxy version matches package metadata", () => {
+        assert.equal(PROXY_VERSION, packageJson.version);
+    });
+
     test("createLogger can omit timestamps when requested", () => {
         const lines = [];
         const originalLog = console.log;
