@@ -1,6 +1,6 @@
 {
   "name": "xmr-node-proxy",
-  "version": "0.29.4",
+  "version": "0.29.5",
   "description": "MoneroOcean-compatible XMR-style mining proxy for nodejs-pool with algo switching support",
   "main": "proxy.js",
   "bin": {
@@ -43,7 +43,7 @@
     "darwin"
   ],
   "dependencies": {
-    "node-blocktemplate": "github:MoneroOcean/node-blocktemplate#v15.8.18",
+    "node-blocktemplate": "github:MoneroOcean/node-blocktemplate#v15.8.19",
     "node-powhash": "github:MoneroOcean/node-powhash#v29.1.8"
   }
 }
