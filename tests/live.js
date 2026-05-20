@@ -122,8 +122,12 @@ function formatReadableTime(date) {
         .join(":");
 }
 
-function emitLiveStatus(status, label, detail = "") {
-    process.stdout.write(`[${formatReadableTime(new Date())}] ${status} ${label}${detail ? ` ${detail}` : ""}\n`);
+function formatLiveStatus(status, label, detail = "") {
+    return `[${formatReadableTime(new Date())}] ${status} ${label}${detail ? ` ${detail}` : ""}`;
+}
+
+function pushLiveStatus(trace, status, label, detail = "") {
+    trace.push(formatLiveStatus(status, label, detail));
 }
 
 function firstLine(value) {
@@ -452,11 +456,12 @@ function formatFailure(label, scenario, proxyHandle, proxyIndex, minerHandle) {
     ].join("\n");
 }
 
-function buildFailureDetails(label, scenario, proxyHandle, proxyIndex, minerHandle) {
+function buildFailureDetails(label, scenario, proxyHandle, proxyIndex, minerHandle, statusTrace = []) {
     return {
         scenario,
         label,
         summary: firstLine(label),
+        statusTrace,
         ...collectFailureLogs(proxyHandle, proxyIndex, minerHandle)
     };
 }
@@ -464,6 +469,7 @@ function buildFailureDetails(label, scenario, proxyHandle, proxyIndex, minerHand
 function formatFailureDetails(entries) {
     return entries.map((entry) => [
         `[${entry.scenario.algo}/${entry.scenario.coin}] ${entry.summary}`,
+        ...(entry.statusTrace?.length ? ["", "Status trace:", ...entry.statusTrace] : []),
         "",
         `Proxy log: ${entry.proxyLogPath}`,
         `Miner log: ${entry.minerLogPath || "<none>"}`,
@@ -494,7 +500,7 @@ function withArtifactPaths(message, context, details = null) {
         + (details?.minerLogPath ? `\nMiner log: ${details.minerLogPath}` : "");
 }
 
-async function waitForProxyReady(proxyHandle, proxyPort, upstreamHost) {
+async function waitForProxyReady(proxyHandle, proxyPort, upstreamHost, upstreamTimeoutMs = 30_000) {
     await pollUntil(() => {
         if (proxyHandle.exit) {
             throw new Error(`proxy exited before bind\n\n${proxyHandle.combined.tail()}`);
@@ -509,10 +515,10 @@ async function waitForProxyReady(proxyHandle, proxyPort, upstreamHost) {
         }
         const lines = proxyHandle.combined.slice();
         return lines.some((line) => line.includes("pool.connect") && line.includes(`host=${upstreamHost}`));
-    }, 30_000, `proxy upstream connect to ${upstreamHost}`);
+    }, upstreamTimeoutMs, `proxy upstream connect to ${upstreamHost}`);
 }
 
-async function waitForInitialPoolJob(proxyHandle, upstreamHost, algo) {
+async function waitForInitialPoolJob(proxyHandle, upstreamHost, algo, timeoutMs = 30_000) {
     await pollUntil(() => {
         if (proxyHandle.exit) {
             throw new Error(`proxy exited before initial pool job\n\n${proxyHandle.combined.tail()}`);
@@ -521,7 +527,7 @@ async function waitForInitialPoolJob(proxyHandle, upstreamHost, algo) {
         return lines.some((line) => line.includes("pool.job")
             && line.includes(`host=${upstreamHost}`)
             && (!algo || line.includes(`algo=${algo}`)));
-    }, 30_000, `initial pool job for ${algo || upstreamHost}`);
+    }, timeoutMs, `initial pool job for ${algo || upstreamHost}`);
 }
 
 async function buildLiveContext() {
@@ -618,8 +624,15 @@ async function buildLiveContext() {
         artifactDir
     });
 
-    await waitForProxyReady(proxyHandle, proxyPort, poolHost);
-    await waitForInitialPoolJob(proxyHandle, poolHost, initialAlgoSet[0]);
+    try {
+        await waitForProxyReady(proxyHandle, proxyPort, poolHost, timeoutMs);
+        await waitForInitialPoolJob(proxyHandle, poolHost, initialAlgoSet[0], timeoutMs);
+    } catch (error) {
+        await stopProcess(proxyHandle).catch(() => {});
+        await proxyHandle.close().catch(() => {});
+        error.message = `${error.message}\n\nArtifacts: ${artifactDir}\nProxy log: ${proxyHandle.combined.filePath}`;
+        throw error;
+    }
 
     return {
         artifactDir,
@@ -667,7 +680,8 @@ async function runScenario(context, scenario) {
     const shouldRequireAlgoSwitch = context.lastAlgo !== null && context.lastAlgo !== scenario.algo;
     const shouldRequireFreshJob = context.lastAlgo !== null;
     const startedAt = Date.now();
-    emitLiveStatus("start", `algo ${scenario.algo}`, `coin=${scenario.coin}`);
+    const statusTrace = [];
+    pushLiveStatus(statusTrace, "start", `algo ${scenario.algo}`, `coin=${scenario.coin}`);
     // When the upstream pool keeps the previous coin sticky for algo-min-time
     // seconds, wait out that configured window before asking the same session
     // to switch families with the next getjob request.
@@ -675,7 +689,7 @@ async function runScenario(context, scenario) {
         const elapsedMs = context.lastAlgoFinishedAt ? Date.now() - context.lastAlgoFinishedAt : 0;
         const waitMs = Math.max(0, context.switchDelayMs - elapsedMs);
         if (waitMs > 0) {
-            emitLiveStatus("wait", `algo ${scenario.algo}`, `switch=${context.lastAlgo}->${scenario.algo} ${Math.ceil(waitMs / 1000)}s`);
+            pushLiveStatus(statusTrace, "wait", `algo ${scenario.algo}`, `switch=${context.lastAlgo}->${scenario.algo} ${Math.ceil(waitMs / 1000)}s`);
             await sleep(waitMs);
         }
     }
@@ -725,7 +739,7 @@ async function runScenario(context, scenario) {
                 const localAccepted = minerLines.filter((line) => /\baccepted\b/i.test(line)).length;
                 const sawJob = proxyLines.some((line) => line.includes("pool.job") && line.includes(`algo=${scenario.algo}`));
                 const sawSubmit = proxyLines.some((line) => line.includes(`Sent submit to ${context.poolHost}`));
-                emitLiveStatus("progress", `algo ${scenario.algo}`, `localAccepted=${localAccepted} job=${sawJob ? "yes" : "no"} upstreamSubmit=${sawSubmit ? "yes" : "no"}`);
+                pushLiveStatus(statusTrace, "progress", `algo ${scenario.algo}`, `localAccepted=${localAccepted} job=${sawJob ? "yes" : "no"} upstreamSubmit=${sawSubmit ? "yes" : "no"}`);
             }
         });
 
@@ -740,10 +754,10 @@ async function runScenario(context, scenario) {
         );
         context.lastAlgo = scenario.algo;
         context.lastAlgoFinishedAt = Date.now();
-        emitLiveStatus("pass", `algo ${scenario.algo}`, `coin=${scenario.coin} elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`);
+        pushLiveStatus(statusTrace, "pass", `algo ${scenario.algo}`, `coin=${scenario.coin} elapsed=${Math.round((Date.now() - startedAt) / 1000)}s`);
     } catch (error) {
-        const details = buildFailureDetails(error.message, scenario, context.proxyHandle, proxyIndex, minerHandle);
-        emitLiveStatus("fail", `algo ${scenario.algo}`, details.summary || "failed");
+        pushLiveStatus(statusTrace, "fail", `algo ${scenario.algo}`, firstLine(error.message) || "failed");
+        const details = buildFailureDetails(error.message, scenario, context.proxyHandle, proxyIndex, minerHandle, statusTrace);
         const wrapped = new Error(details.summary || firstLine(error.message) || "failed");
         Object.defineProperty(wrapped, "liveFailureDetails", {
             value: details,
@@ -773,7 +787,7 @@ const liveFailureState = {
     printed: false
 };
 
-test.describe("xmr-node-proxy live miner integration suite", { concurrency: false }, () => {
+test.describe("xmr-node-proxy live miner integration suite", { concurrency: false, timeout: 60 * 60 * 1000 }, () => {
     test.after(() => {
         if (!liveFailureState.details.length || liveFailureState.printed) return;
         process.stdout.write(`\nLive failure logs\n${formatFailureDetails(liveFailureState.details)}\n`);
@@ -800,7 +814,7 @@ test.describe("xmr-node-proxy live miner integration suite", { concurrency: fals
                         error.message = withArtifactPaths(error.message, context, error.liveFailureDetails);
                         throw error;
                     }
-                }).catch(() => {});
+                });
                 if (scenarioFailed) break;
             }
         } catch (error) {
