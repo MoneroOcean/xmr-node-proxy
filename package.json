@@ -36,7 +36,8 @@
   },
   "homepage": "https://github.com/MoneroOcean/xmr-node-proxy#readme",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.9.0",
+    "npm": ">=11.10.0"
   },
   "os": [
     "linux",

@@ -60,14 +60,15 @@ for command_name in git node npm openssl python3 make g++; do
 done
 
 NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
-if [[ "$NODE_MAJOR" -lt 18 ]]; then
+NODE_MINOR=$(node -p 'Number(process.versions.node.split(".")[1])')
+if [[ "$NODE_MAJOR" -lt 22 || ( "$NODE_MAJOR" -eq 22 && "$NODE_MINOR" -lt 9 ) ]]; then
     # Stop early instead of leaving the checkout in a half-installed state with an unsupported Node runtime.
-    echo "Node.js 18+ is required, but apt installed $(node -v)."
+    echo "Node.js 22.9.0+ is required, but the package manager installed $(node -v)."
     exit 1
 fi
 
 cd "$ROOT_DIR"
-npm install --no-audit --no-fund --no-package-lock
+npm install --no-audit --no-fund --no-package-lock --min-release-age=7
 
 if [[ ! -f config.json ]]; then
     cp config_example.json config.json

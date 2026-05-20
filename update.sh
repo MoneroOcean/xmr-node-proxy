@@ -25,7 +25,7 @@ git reset --hard origin/master
 git clean -fd
 rm -f package-lock.json
 
-npm install --no-audit --no-fund --no-package-lock
+npm install --no-audit --no-fund --no-package-lock --min-release-age=7
 npm test
 
 NEW_REV=$(git rev-parse --short HEAD)
