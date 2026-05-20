@@ -58,6 +58,14 @@ registerHash(["argon2/chukwav2", "chukwav2"], (convertedBlob) => powHash.argon2(
 registerHash(["argon2/wrkz"], (convertedBlob) => powHash.argon2(convertedBlob, 1));
 registerHash(["k12"], (convertedBlob) => powHash.k12(convertedBlob));
 registerHash(["astrobwt"], (convertedBlob) => powHash.astrobwt(convertedBlob, 0));
+registerHash(["kawpow", "kawpow4"], (convertedBlob, blockTemplate, params) => {
+    if (typeof params?.nonce !== "string" || typeof params?.mixhash !== "string") return false;
+    return powHash.kawpow(
+        convertedBlob,
+        Buffer.from(params.nonce, "hex"),
+        Buffer.from(params.mixhash, "hex")
+    );
+});
 
 const C29_HASHERS = {
     c29s: (header, ring) => powHash.c29s(header, ring),
@@ -73,13 +81,13 @@ function createAlgoTools({ logger = null } = {}) {
         logger?.error("algo.detect_ambiguous", { algos: algos.join(",") });
         return algos[0] || DEFAULT_ALGO[0];
     }
-    function hashFunc(convertedBlob, blockTemplate) {
+    function hashFunc(convertedBlob, blockTemplate, params) {
         const blockVersion = blockTemplate.blocktemplate_blob
             ? parseInt(blockTemplate.blocktemplate_blob.slice(0, 2), 16)
             : 0;
         const algo = blockTemplate.algo || detectAlgo({ [DEFAULT_ALGO[0]]: 1 }, blockVersion);
         const hasher = HASH_DISPATCH.get(algo);
-        return hasher ? hasher(convertedBlob, blockTemplate) : Buffer.alloc(0);
+        return hasher ? hasher(convertedBlob, blockTemplate, params) : Buffer.alloc(0);
     }
 
     function hashFuncC29(algo, header, ring) {

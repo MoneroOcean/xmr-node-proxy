@@ -19,8 +19,8 @@ function createTemplate(options = {}) {
     return {
         id: templateId,
         job_id: jobId,
-        blocktemplate_blob: `${(height % 255).toString(16).padStart(2, "0")}${"11".repeat(20)}`,
-        blob_type: 0,
+        blocktemplate_blob: options.blob || `${(height % 255).toString(16).padStart(2, "0")}${"11".repeat(20)}`,
+        blob_type: options.blobType ?? 0,
         difficulty: targetDiff,
         height,
         seed_hash: "00".repeat(32),
@@ -29,7 +29,7 @@ function createTemplate(options = {}) {
         client_pool_offset: 8,
         target_diff: targetDiff,
         target_diff_hex: targetDiff.toString(16),
-        algo: "test/algo"
+        algo: options.algo || "test/algo"
     };
 }
 
@@ -314,9 +314,9 @@ async function startHarness(options = {}) {
                 username: "wallet-primary",
                 password: "proxy",
                 keepAlive: true,
-                algo: "test/algo",
-                algo_perf: { "test/algo": 1 },
-                blob_type: 0,
+                algo: options.poolAlgo || "test/algo",
+                algo_perf: options.poolAlgoPerf || { [options.poolAlgo || "test/algo"]: 1 },
+                blob_type: options.poolBlobType ?? 0,
                 default: true
             }
         ],
@@ -365,7 +365,7 @@ async function startHarness(options = {}) {
     const logger = options.logger || createBufferedLogger("xnp");
     const app = createStandaloneApp(config, {
         configPath: path.join(tempDir, "config.json"),
-        coinsFactory: createFakeCoins,
+        coinsFactory: options.coinsFactory || createFakeCoins,
         logger
     });
     app.start();

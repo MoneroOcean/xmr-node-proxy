@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const powHash = require("node-powhash");
 const test = require("node:test");
 
 const createCoins = require("../coins/core");
@@ -66,6 +67,81 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
         assert.equal(accepted, false);
         assert.equal(warnings.some((message) => message === "share.low_diff"), true);
+    });
+
+    test("processShare verifies KawPoW mixhash before forwarding pool shares", () => {
+        const coins = createCoins({
+            instanceId: Buffer.from([1, 2, 3])
+        });
+        const miner = {
+            blocks: 0,
+            shares: 0,
+            hashes: 0,
+            logString: "kawpow-miner",
+            pool: "rvn-pool"
+        };
+        const job = {
+            blob_type: coins.parseBlobType("raven"),
+            extraNonce: 0,
+            difficulty: 1
+        };
+        const blocktemplateBlob = Buffer.concat([
+            Buffer.alloc(80),
+            Buffer.alloc(8),
+            Buffer.alloc(32),
+            Buffer.from("00", "hex")
+        ]).toString("hex");
+        const template = new coins.MasterBlockTemplate(createProxyTemplate({
+            algo: "kawpow",
+            blob_type: "raven",
+            blocktemplate_blob: blocktemplateBlob,
+            difficulty: 1,
+            height: 0,
+            id: "kawpow-template",
+            job_id: "kawpow-job",
+            reserved_offset: 0,
+            target_diff: 500
+        }));
+        const goodShare = {
+            nonce: "000000000000059b",
+            mixhash: "00".repeat(32),
+            result: "24e0b435ce60e33d74afb8634dd9f6807942042efecd86e42580a50924440a00"
+        };
+        const forwarded = [];
+
+        const accepted = coins.processShare(miner, job, template, goodShare, {
+            onPoolShare(data) {
+                forwarded.push(data);
+            }
+        });
+
+        assert.equal(accepted, true);
+        assert.equal(miner.blocks, 1);
+        assert.equal(forwarded.length, 1);
+        assert.deepEqual(forwarded[0], {
+            btID: undefined,
+            mixhash: goodShare.mixhash,
+            nonce: goodShare.nonce,
+            pow: undefined,
+            resultHash: goodShare.result,
+            workerNonce: job.extraNonce
+        });
+        assert.equal(
+            powHash.kawpow(
+                coins.convertBlob(template.buffer, template.blob_type),
+                Buffer.from(goodShare.nonce, "hex"),
+                Buffer.from(goodShare.mixhash, "hex")
+            ).toString("hex"),
+            goodShare.result
+        );
+
+        const rejected = coins.processShare(miner, job, template, {
+            ...goodShare,
+            mixhash: "11".repeat(32)
+        });
+
+        assert.equal(rejected, false);
+        assert.equal(forwarded.length, 1);
     });
 
     test("parseBlobType handles non-string objects without prototype lookups", () => {

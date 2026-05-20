@@ -84,8 +84,9 @@ function createShareProcessor(options) {
             return !hashFuncC29(blockTemplate.algo, grinHeader(template, nonce, blobTypeNum, params.pow), params.pow);
         }
         if (shouldVerifyShare()) {
-            const shareBuffer = constructNewBlob(template, Buffer.from(nonce, "hex"), blobTypeNum);
-            const hash = hashFunc(convertBlob(shareBuffer, blobTypeNum), blockTemplate);
+            const shareBuffer = constructNewBlob(template, Buffer.from(nonce, "hex"), blobTypeNum, params);
+            const hash = hashFunc(convertBlob(shareBuffer, blobTypeNum), blockTemplate, params);
+            if (!Buffer.isBuffer(hash)) return false;
             return hash.toString("hex") === params.result;
         }
         // Cap expensive local verification work so bursty block candidates
@@ -98,6 +99,7 @@ function createShareProcessor(options) {
         if (typeof onPoolShare !== "function") return;
         onPoolShare({
             btID: blockTemplate.id,
+            mixhash: params.mixhash,
             nonce: params.nonce,
             pow: params.pow,
             resultHash: params.result,

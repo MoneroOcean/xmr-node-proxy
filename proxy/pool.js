@@ -328,6 +328,7 @@ class UpstreamPoolClient {
 }
 function copyOptionalShareParams(params, shareData) {
     if (shareData.resultHash) params.result = shareData.resultHash;
+    if (shareData.mixhash) params.mixhash = shareData.mixhash;
     if (shareData.pow) params.pow = shareData.pow;
 }
 function isUnauthenticatedError(message) {

@@ -3,6 +3,7 @@ const blockTemplate = require("node-blocktemplate");
 const BLOB_TYPE = Object.freeze({
     CRYPTONOTE: 0, FORKNOTE1: 1, FORKNOTE2: 2, CRYPTONOTE2: 3, RYO: 4, LOKI: 5, CRYPTONOTE3: 6, AEON: 7,
     CUCKAROO: 8, XTNC: 9, TUBE: 10, XHV: 11, XTA: 12, ZEPH: 13, XLA: 14, SAL: 15, ARQ: 16, XEQ: 22,
+    RAVEN: 101,
     DERO: 100, RTM: 104, KCN: 105, XTM_T: 106
 });
 const BLOB_TYPES = new Map(Object.entries({
@@ -11,12 +12,24 @@ const BLOB_TYPES = new Map(Object.entries({
     cuckaroo: BLOB_TYPE.CUCKAROO, cryptonote_xtnc: BLOB_TYPE.XTNC, cryptonote_tube: BLOB_TYPE.TUBE,
     cryptonote_xhv: BLOB_TYPE.XHV, cryptonote_xta: BLOB_TYPE.XTA, cryptonote_zeph: BLOB_TYPE.ZEPH,
     cryptonote_xla: BLOB_TYPE.XLA, cryptonote_sal: BLOB_TYPE.SAL, cryptonote_arq: BLOB_TYPE.ARQ,
-    cryptonote_xeq: BLOB_TYPE.XEQ, cryptonote_dero: BLOB_TYPE.DERO, raptoreum: BLOB_TYPE.RTM,
+    cryptonote_xeq: BLOB_TYPE.XEQ, raven: BLOB_TYPE.RAVEN, cryptonote_dero: BLOB_TYPE.DERO, raptoreum: BLOB_TYPE.RTM,
     raptoreum_kcn: BLOB_TYPE.KCN, "xtm-t": BLOB_TYPE.XTM_T
 }));
 const GRIN_BLOB_TYPES = new Set([BLOB_TYPE.CUCKAROO, BLOB_TYPE.XTNC, BLOB_TYPE.TUBE, BLOB_TYPE.XTA]);
 const PASSTHROUGH_BLOB_TYPES = new Set([BLOB_TYPE.DERO, BLOB_TYPE.XTM_T]);
 const SPECIAL_BLOB_HANDLERS = new Map([
+    [BLOB_TYPE.RAVEN, {
+        convert: (blobBuffer) => blockTemplate.convertRavenBlob(blobBuffer),
+        construct: (blockTemplateBuffer, nonceBuffer, params) => {
+            const shareBuffer = Buffer.alloc(blockTemplateBuffer.length);
+            blockTemplateBuffer.copy(shareBuffer);
+            return blockTemplate.constructNewRavenBlob(
+                shareBuffer,
+                nonceBuffer,
+                Buffer.from(params.mixhash || "", "hex")
+            );
+        }
+    }],
     [BLOB_TYPE.RTM, {
         convert: (blobBuffer) => blockTemplate.convertRtmBlob(blobBuffer),
         construct: (blockTemplateBuffer, nonceBuffer) => blockTemplate.constructNewRtmBlob(blockTemplateBuffer, nonceBuffer)
@@ -40,7 +53,7 @@ function blobTypePassthrough(blobTypeNum) {
     return PASSTHROUGH_BLOB_TYPES.has(blobTypeNum);
 }
 function nonceSize(blobTypeNum) {
-    return blobTypeNum === BLOB_TYPE.AEON ? 8 : 4;
+    return blobTypeNum === BLOB_TYPE.AEON || blobTypeNum === BLOB_TYPE.RAVEN ? 8 : 4;
 }
 
 function c29ProofSize(blobTypeNum) {
@@ -67,7 +80,7 @@ function constructNewBlob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring) {
         return newBlob;
     }
     const handler = SPECIAL_BLOB_HANDLERS.get(blobTypeNum);
-    if (handler) return handler.construct(blockTemplateBuffer, nonceBuffer);
+    if (handler) return handler.construct(blockTemplateBuffer, nonceBuffer, ring);
     return blockTemplate.construct_block_blob(blockTemplateBuffer, nonceBuffer, blobTypeNum, ring);
 }
 module.exports = { blobTypeGrin, c29ProofSize, constructNewBlob, convertBlob, nonceSize, parseBlobType };

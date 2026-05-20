@@ -2,16 +2,41 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
+const powHash = require("node-powhash");
 const test = require("node:test");
 
+const { bufferToBigIntLE } = require("../proxy/common");
 const {
     JsonLineClient,
     createTemplate,
     startHarness
 } = require("./common/harness");
+const createCoins = require("../coins/core");
 
 function encodeDiff(value) {
     return value.toString(16);
+}
+
+function hashDiff(hashBuffer) {
+    const value = bufferToBigIntLE(hashBuffer);
+    return value === 0n ? (1n << 256n) - 1n : ((1n << 256n) - 1n) / value;
+}
+
+function findKawpowShare(job, minimumDiff) {
+    const header = Buffer.from(job.blob, "hex");
+    for (let nonceValue = 0n; nonceValue < 100000n; nonceValue += 1n) {
+        const nonce = Buffer.alloc(8);
+        nonce.writeBigUInt64BE(nonceValue);
+        const [result, mixhash] = powHash.kawpow_light(header, nonce, job.height);
+        if (hashDiff(result) >= BigInt(minimumDiff)) {
+            return {
+                mixhash: mixhash.toString("hex"),
+                nonce: nonce.toString("hex"),
+                result: result.toString("hex")
+            };
+        }
+    }
+    throw new Error("Unable to find KawPoW test share");
 }
 
 const runtimeFailureState = {
@@ -141,6 +166,73 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 await harness.waitFor(() => harness.primaryPool.submitRequests.length === 1);
                 assert.equal(firstReply.error, null);
                 assert.equal(secondReply.error.message, "Duplicate share");
+                assert.equal(harness.primaryPool.submitRequests.length, 1);
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("KawPoW pool-difficulty shares are verified and submitted upstream", async () => {
+        await withHarness("KawPoW pool-difficulty shares are verified and submitted upstream", {
+            coinsFactory: createCoins,
+            listeningDiff: 1,
+            poolAlgo: "kawpow",
+            poolAlgoPerf: { kawpow: 1 },
+            poolBlobType: "raven",
+            primaryTemplate: createTemplate({
+                algo: "kawpow",
+                blob: Buffer.concat([
+                    Buffer.alloc(80),
+                    Buffer.alloc(8),
+                    Buffer.alloc(32),
+                    Buffer.from("00", "hex")
+                ]).toString("hex"),
+                blobType: "raven",
+                height: 0,
+                targetDiff: 500
+            })
+        }, async (harness) => {
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                const loginReply = await client.request({
+                    id: 13,
+                    method: "login",
+                    params: {
+                        login: "wallet-kawpow",
+                        pass: "worker-kawpow"
+                    }
+                });
+                const kawpowShare = findKawpowShare(loginReply.result.job, 500);
+                const share = {
+                    id: loginReply.result.id,
+                    job_id: loginReply.result.job.job_id,
+                    ...kawpowShare
+                };
+
+                const submitReply = await client.request({ id: 14, method: "submit", params: share });
+
+                await harness.waitFor(() => harness.primaryPool.submitRequests.length === 1);
+                assert.equal(submitReply.error, null);
+                assert.deepEqual(submitReply.result, { status: "OK" });
+                assert.equal(harness.primaryPool.submitRequests[0].params.job_id, harness.primaryPool.template.job_id);
+                assert.equal(harness.primaryPool.submitRequests[0].params.mixhash, share.mixhash);
+                assert.equal(harness.primaryPool.submitRequests[0].params.nonce, share.nonce);
+                assert.equal(harness.primaryPool.submitRequests[0].params.result, share.result);
+
+                const badMixReply = await client.request({
+                    id: 15,
+                    method: "submit",
+                    params: {
+                        ...share,
+                        job_id: loginReply.result.job.job_id,
+                        mixhash: "11".repeat(32),
+                        nonce: "000000000000059c"
+                    }
+                });
+
+                assert.equal(badMixReply.error.message, "Low difficulty share");
                 assert.equal(harness.primaryPool.submitRequests.length, 1);
             } finally {
                 await client.close();
