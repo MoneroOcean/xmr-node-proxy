@@ -45,6 +45,6 @@
   ],
   "dependencies": {
     "node-blocktemplate": "github:MoneroOcean/node-blocktemplate#v15.8.19",
-    "node-powhash": "github:MoneroOcean/node-powhash#v29.2.3"
+    "node-powhash": "github:MoneroOcean/node-powhash#v29.2.4"
   }
 }
