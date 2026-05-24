@@ -3,8 +3,9 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const packageJson = require("../package.json");
 
-const PROXY_VERSION = "0.29.7";
+const PROXY_VERSION = packageJson.version;
 const DEFAULT_ALGO = ["rx/0"];
 const DEFAULT_ALGO_PERF = { "rx/0": 1, "rx/loki": 1 };
 const HTTP_OK_RESPONSE = " 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 19\r\n\r\nMining Proxy Online";
