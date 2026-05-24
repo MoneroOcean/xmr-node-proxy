@@ -100,12 +100,14 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
             id: "kawpow-template",
             job_id: "kawpow-job",
             reserved_offset: 0,
-            target_diff: 500
+            target_diff: 1
         }));
+        const nonce = "000000000000059b";
+        const [result, mixhash] = powHash.kawpow_light(coins.convertBlob(template.buffer, template.blob_type), Buffer.from(nonce, "hex"), template.height);
         const goodShare = {
-            nonce: "000000000000059b",
-            mixhash: "00".repeat(32),
-            result: "24e0b435ce60e33d74afb8634dd9f6807942042efecd86e42580a50924440a00"
+            nonce,
+            mixhash: mixhash.toString("hex"),
+            result: result.toString("hex")
         };
         const forwarded = [];
 
@@ -127,11 +129,11 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
             workerNonce: job.extraNonce
         });
         assert.equal(
-            powHash.kawpow(
+            powHash.kawpow_light(
                 coins.convertBlob(template.buffer, template.blob_type),
                 Buffer.from(goodShare.nonce, "hex"),
-                Buffer.from(goodShare.mixhash, "hex")
-            ).toString("hex"),
+                template.height
+            )[0].toString("hex"),
             goodShare.result
         );
 

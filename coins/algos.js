@@ -60,11 +60,8 @@ registerHash(["k12"], (convertedBlob) => powHash.k12(convertedBlob));
 registerHash(["astrobwt"], (convertedBlob) => powHash.astrobwt(convertedBlob, 0));
 registerHash(["kawpow", "kawpow4"], (convertedBlob, blockTemplate, params) => {
     if (typeof params?.nonce !== "string" || typeof params?.mixhash !== "string") return false;
-    return powHash.kawpow(
-        convertedBlob,
-        Buffer.from(params.nonce, "hex"),
-        Buffer.from(params.mixhash, "hex")
-    );
+    const hashes = powHash.kawpow_light(convertedBlob, Buffer.from(params.nonce, "hex"), blockTemplate.height);
+    return hashes[1].equals(Buffer.from(params.mixhash, "hex")) ? hashes[0] : false;
 });
 
 const C29_HASHERS = {
