@@ -24,15 +24,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            node: 18
-          - os: ubuntu-24.04
             node: 24
           - os: ubuntu-latest
-            node: system
-          - os: ubuntu-latest
             node: 24
-          - os: macos-latest
-            node: system
           - os: macos-latest
             node: 24
 
