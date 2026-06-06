@@ -3,7 +3,6 @@
 const assert = require("node:assert/strict");
 const cp = require("node:child_process");
 const fs = require("node:fs/promises");
-const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -16,13 +15,10 @@ const {
     waitFor
 } = require("./common/harness");
 
-async function getFreePort() {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const port = server.address().port;
-    await new Promise((resolve) => server.close(resolve));
-    return port;
+function listeningPortFromLine(line) {
+    const match = line.match(/\bport=(\d+)\b/);
+    assert.ok(match, `Missing listener port in log line: ${line}`);
+    return Number(match[1]);
 }
 
 async function listChildPids(parentPid) {
@@ -135,7 +131,13 @@ function spawnClusterProxy({ configPath }) {
     collectLines(child.stderr, lines);
 
     async function waitForLine(pattern, timeoutMs = 7_000) {
-        await waitFor(() => lines.some((line) => pattern.test(line)), timeoutMs);
+        try {
+            await waitFor(() => lines.some((line) => pattern.test(line)), timeoutMs);
+        } catch (error) {
+            error.message += ` while waiting for ${pattern}\n${lines.join("\n")}`;
+            throw error;
+        }
+        return lines.find((line) => pattern.test(line));
     }
 
     async function stop() {
@@ -150,13 +152,12 @@ function spawnClusterProxy({ configPath }) {
 test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => {
     test("cluster mode respawns crashed workers and keeps serving miners", async () => {
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xnp-cluster-"));
-        const minerPort = await getFreePort();
         const primaryPool = new FakePool(createTemplate(), { hostname: "127.0.0.1" });
         await primaryPool.start();
 
         const configPath = path.join(tempDir, "config.json");
         await fs.writeFile(configPath, JSON.stringify(createClusterConfig({
-            minerPort,
+            minerPort: 0,
             primaryPoolPort: primaryPool.port,
             listeningDiff: 100
         }), null, 2));
@@ -165,9 +166,10 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
 
         try {
             await waitFor(() => primaryPool.loginRequests.length > 0);
-            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*diff=100`));
+            const initialReadyLine = await proxy.waitForLine(/listen\.ready .*diff=100/);
+            const initialMinerPort = listeningPortFromLine(initialReadyLine);
 
-            const firstClient = new JsonLineClient(minerPort);
+            const firstClient = new JsonLineClient(initialMinerPort);
             await firstClient.connect();
             const firstReply = await firstClient.request({
                 id: 1,
@@ -189,9 +191,11 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
                 const childPids = await listChildPids(proxy.child.pid);
                 return childPids.length === 1 && childPids[0] !== workerPid;
             }, 7_000);
-            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*diff=100`).test(line)).length >= 2, 7_000);
+            await waitFor(() => proxy.lines.filter((line) => /listen\.ready .*diff=100/.test(line)).length >= 2, 7_000);
+            const readyLines = proxy.lines.filter((line) => /listen\.ready .*diff=100/.test(line));
+            const replacementMinerPort = listeningPortFromLine(readyLines.at(-1));
 
-            const secondClient = new JsonLineClient(minerPort);
+            const secondClient = new JsonLineClient(replacementMinerPort);
             await secondClient.connect();
             const secondReply = await secondClient.request({
                 id: 2,
@@ -212,7 +216,6 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
 
     test("cluster mode reloads config on SIGHUP", async () => {
         const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xnp-reload-"));
-        const minerPort = await getFreePort();
         const primaryPool = new FakePool(createTemplate({ jobId: "job-a", templateId: "tpl-a" }), { hostname: "127.0.0.1" });
         const backupPool = new FakePool(createTemplate({ jobId: "job-b", templateId: "tpl-b" }), { hostname: "127.0.0.1" });
         await primaryPool.start();
@@ -220,7 +223,7 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
 
         const configPath = path.join(tempDir, "config.json");
         await fs.writeFile(configPath, JSON.stringify(createClusterConfig({
-            minerPort,
+            minerPort: 0,
             primaryPoolPort: primaryPool.port,
             listeningDiff: 100
         }), null, 2));
@@ -229,9 +232,10 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
 
         try {
             await waitFor(() => primaryPool.loginRequests.length > 0);
-            await proxy.waitForLine(new RegExp(`listen.ready .*port=${minerPort} .*diff=100`));
+            const initialReadyLine = await proxy.waitForLine(/listen\.ready .*diff=100/);
+            const initialMinerPort = listeningPortFromLine(initialReadyLine);
 
-            const firstClient = new JsonLineClient(minerPort);
+            const firstClient = new JsonLineClient(initialMinerPort);
             await firstClient.connect();
             const firstReply = await firstClient.request({
                 id: 10,
@@ -245,7 +249,7 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
             await firstClient.close();
 
             await fs.writeFile(configPath, JSON.stringify(createClusterConfig({
-                minerPort,
+                minerPort: 0,
                 primaryPoolPort: backupPool.port,
                 listeningDiff: 250
             }), null, 2));
@@ -253,9 +257,10 @@ test.describe("xmr-node-proxy clustered runtime", { concurrency: false }, () => 
             proxy.child.kill("SIGHUP");
             await proxy.waitForLine(/config\.reload_complete/);
             await waitFor(() => backupPool.loginRequests.length > 0, 7_000);
-            await waitFor(() => proxy.lines.filter((line) => new RegExp(`listen.ready .*port=${minerPort} .*diff=250`).test(line)).length >= 1, 7_000);
+            const reloadedReadyLine = await proxy.waitForLine(/listen\.ready .*diff=250/);
+            const reloadedMinerPort = listeningPortFromLine(reloadedReadyLine);
 
-            const secondClient = new JsonLineClient(minerPort);
+            const secondClient = new JsonLineClient(reloadedMinerPort);
             await secondClient.connect();
             const secondReply = await secondClient.request({
                 id: 11,
