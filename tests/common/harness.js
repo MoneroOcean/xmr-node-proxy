@@ -33,6 +33,20 @@ function createTemplate(options = {}) {
     };
 }
 
+function createRavenTemplateBlob() {
+    const coinbaseTransaction = Buffer.from(
+        `0100000001${"00".repeat(32)}ffffffff0100ffffffff0100000000000000000000000000`,
+        "hex"
+    );
+    return Buffer.concat([
+        Buffer.alloc(80),
+        Buffer.alloc(8),
+        Buffer.alloc(32),
+        Buffer.from([1]),
+        coinbaseTransaction
+    ]).toString("hex");
+}
+
 function formatLogValue(value) {
     if (typeof value === "undefined") return "";
     if (value === null) return "null";
@@ -408,6 +422,7 @@ async function startHarness(options = {}) {
 module.exports = {
     FakePool,
     JsonLineClient,
+    createRavenTemplateBlob,
     createTemplate,
     httpRequest,
     startHarness,

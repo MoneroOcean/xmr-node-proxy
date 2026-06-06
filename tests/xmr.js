@@ -7,6 +7,7 @@ const test = require("node:test");
 const createCoins = require("../coins/core");
 const { createTemplateTools } = require("../coins/template");
 const { CircularBuffer } = require("../proxy/common");
+const { createRavenTemplateBlob } = require("./common/harness");
 
 function createProxyTemplate(overrides = {}) {
     return {
@@ -85,12 +86,7 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
             extraNonce: 0,
             difficulty: 1
         };
-        const blocktemplateBlob = Buffer.concat([
-            Buffer.alloc(80),
-            Buffer.alloc(8),
-            Buffer.alloc(32),
-            Buffer.from("00", "hex")
-        ]).toString("hex");
+        const blocktemplateBlob = createRavenTemplateBlob();
         const template = new coins.MasterBlockTemplate(createProxyTemplate({
             algo: "kawpow",
             blob_type: "raven",

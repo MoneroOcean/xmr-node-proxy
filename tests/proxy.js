@@ -8,6 +8,7 @@ const test = require("node:test");
 const { bufferToBigIntLE } = require("../proxy/common");
 const {
     JsonLineClient,
+    createRavenTemplateBlob,
     createTemplate,
     startHarness
 } = require("./common/harness");
@@ -182,12 +183,7 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
             poolBlobType: "raven",
             primaryTemplate: createTemplate({
                 algo: "kawpow",
-                blob: Buffer.concat([
-                    Buffer.alloc(80),
-                    Buffer.alloc(8),
-                    Buffer.alloc(32),
-                    Buffer.from("00", "hex")
-                ]).toString("hex"),
+                blob: createRavenTemplateBlob(),
                 blobType: "raven",
                 height: 0,
                 targetDiff: 500
