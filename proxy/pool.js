@@ -294,6 +294,7 @@ class UpstreamPoolClient {
             return;
         }
         if (["keepalived", "submit"].includes(sendLog.method)) {
+            // keepalived/submit replies are fire-and-forget acks; nothing to do on success.
             return;
         }
         this.logger.warn("pool.reply_unhandled", { host: this.hostname, method: sendLog.method });
