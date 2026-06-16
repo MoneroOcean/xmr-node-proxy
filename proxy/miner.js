@@ -14,7 +14,8 @@ const METHOD_HANDLERS = new Map([
 class MinerSession {
     constructor(options) {
         Object.assign(this, createMinerBaseState(options));
-        const loginDiffSplit = options.params.login ? options.params.login.split("+") : [""];
+        const loginValue = typeof options.params.login === "string" ? options.params.login : "";
+        const loginDiffSplit = loginValue ? loginValue.split("+") : [""];
         const passAlgoSplit = this.applyLoginParams(options, loginDiffSplit);
         applyPasswordAlgo(options.params, passAlgoSplit);
         this.algos = buildAlgoSet(options.params.algo);
@@ -24,7 +25,7 @@ class MinerSession {
         this.finalizeLogin();
     }
     applyLoginParams(options, loginDiffSplit) {
-        const pass = options.params.pass || "x";
+        const pass = typeof options.params.pass === "string" && options.params.pass ? options.params.pass : "x";
         const passAlgoSplit = pass.split("~");
         const passSplit = passAlgoSplit[0].split(":");
 
