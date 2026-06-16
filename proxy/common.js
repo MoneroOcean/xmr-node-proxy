@@ -534,9 +534,6 @@ function createLineParser({ maxBufferBytes = MAX_JSON_LINE_BYTES, onLine, onOver
             }
             buffer = flushJsonLines(buffer, onLine);
             return true;
-        },
-        clear() {
-            buffer = "";
         }
     };
 }
