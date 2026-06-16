@@ -2,26 +2,38 @@
 
 # xmr-node-proxy
 
-Lean mining proxy for XMR-style pools.
+Stratum proxy and share aggregator for MoneroOcean-style XMR-family pools.
 
 <p>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-111111.svg" alt="MIT"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-111111.svg" alt="Node 18+">
-  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-111111.svg" alt="Linux and macOS">
-  <img src="https://img.shields.io/badge/focus-mining%20proxy-111111.svg" alt="Mining proxy">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%E2%89%A522.9-brightgreen.svg" alt="Node >=22.9">
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey.svg" alt="Linux and macOS">
+  <img src="https://img.shields.io/badge/focus-mining%20proxy-0a7ea4.svg" alt="Mining proxy">
+  <a href="https://github.com/MoneroOcean"><img src="https://img.shields.io/badge/MoneroOcean-ecosystem-6f42c1.svg" alt="MoneroOcean"></a>
 </p>
 
 </div>
 
-It sits between miners and the upstream pool, keeps miner-facing difficulty local, fans out fresh jobs, balances miners across configured pools, and exposes a lightweight HTTP monitor for MoneroOcean-style XMR-family deployments.
+## Overview
 
-## Highlights
+`xmr-node-proxy` sits between miners and an upstream pool. It keeps miner-facing
+difficulty local, fans out fresh jobs, balances miners across configured pools,
+and exposes a lightweight HTTP monitor for MoneroOcean-style XMR-family
+deployments.
 
-- Modern Node.js runtime with `node >= 18`
-- Local miner-facing difficulty control and job fanout
+It is the share-aggregation edge of the
+[nodejs-pool](https://github.com/MoneroOcean/nodejs-pool) stack: many miners
+connect to one proxy, and the proxy presents a smaller set of connections to the
+upstream pool while preserving algo-switching behavior.
+
+## Features
+
+- Modern Node.js runtime (`node >= 22.9.0`)
+- Local miner-facing difficulty (vardiff) control and job fanout
 - Balancing and failover across configured upstream pools
 - Built-in HTTP monitor with optional basic auth
 - Structured logs with low operational noise
+- `SIGHUP` config reload without replacing the main process
 
 ## What This Proxy Supports
 
@@ -40,7 +52,8 @@ Those use different stratum families than this proxy's XMR-style path.
 
 ## Trust Model
 
-This proxy is intended to sit in front of a controlled miner fleet, not to act as a zero-trust public pool edge.
+This proxy is intended to sit in front of a controlled miner fleet, not to act
+as a zero-trust public pool edge.
 
 - Normal miner-difficulty shares intentionally trust the miner-reported `result` so the proxy can keep per-share CPU cost low.
 - The proxy still enforces job, template, and duplicate-share checks locally and can verify pool-target candidates, but it is not a hostile-miner firewall.
@@ -48,7 +61,7 @@ This proxy is intended to sit in front of a controlled miner fleet, not to act a
 
 ## Quick Start
 
-1. Install Node.js `18+` and build tools required for native hashing modules.
+1. Install Node.js `22.9.0+` and the build tools required for the native hashing modules.
 2. Clone the repo and install dependencies:
 
 ```bash
@@ -61,7 +74,9 @@ npm install
 cp config_example.json config.json
 ```
 
-The bundled [`config_example.json`](./config_example.json) uses `YOUR_WALLET` placeholders on purpose. Replace those with your own wallet before you start the proxy.
+The bundled [`config_example.json`](./config_example.json) uses `YOUR_WALLET`
+placeholders on purpose. Replace those with your own wallet before you start the
+proxy.
 
 4. Run the test suite before first deployment:
 
@@ -85,6 +100,29 @@ Config reload:
 - Send `SIGHUP` to the running proxy to reload `config.json` in place
 - In `pm2`, use `pm2 sendSignal SIGHUP xnp`
 
+## Architecture
+
+The proxy runs a clustered master/worker model. Source is split between the
+runtime (`proxy/`) and the coin/protocol layer (`coins/`).
+
+| Path | Role |
+| --- | --- |
+| `proxy.js` | Entry point; argument parsing and cluster bootstrap |
+| `proxy/master.js` | Master process: config, pool connections, job fanout |
+| `proxy/worker.js` | Worker process: miner-facing socket handling |
+| `proxy/miner.js` | Per-miner state and stratum handling |
+| `proxy/pool.js` | Upstream pool connection and job intake |
+| `proxy/balance.js` | Miner balancing across active pools |
+| `proxy/monitor.js` | Built-in HTTP monitor |
+| `proxy/stats.js` | Hashrate / activity accounting |
+| `proxy/common.js` | Shared helpers and logging |
+| `coins/` | XMR-style blob, template, share, and algo handling |
+
+Native hashing and block-template support come from the
+[node-powhash](https://github.com/MoneroOcean/node-powhash) and
+[node-blocktemplate](https://github.com/MoneroOcean/node-blocktemplate) addons
+declared in `package.json`, which are compiled at install time.
+
 ## Which Install Method To Use
 
 Three reasonable ways to run the proxy are supported here.
@@ -99,7 +137,7 @@ Manual local install:
 
 - best if you want a quick local setup on a supported Linux host without typing each install step yourself
 - it sets up packages, local npm dependencies, default config, and self-signed certs
-- downside: it still installs software directly onto the host machine and depends on distro package availability for Node.js `18+`
+- downside: it still installs software directly onto the host machine and depends on distro package availability for Node.js `22.9.0+`
 
 Docker:
 
@@ -138,7 +176,7 @@ Requirements:
 
 Safety notes:
 
-- if apt installs a Node.js older than `18`, the script stops with an explicit error
+- if apt installs a Node.js older than `22.9.0`, the script stops with an explicit error
 - if only one of `cert.key` or `cert.pem` exists, the script stops instead of overwriting the surviving file
 
 After it completes:
@@ -155,7 +193,8 @@ For updating an existing checkout in place:
 bash update.sh
 ```
 
-Use it only when you want this checkout force-synced to the latest `origin/master` state.
+Use it only when you want this checkout force-synced to the latest
+`origin/master` state.
 
 Important:
 
@@ -187,7 +226,11 @@ If your config uses TLS listener files from the repo root, mount those too:
 docker run --rm -it -p 3333:3333 -p 8443:8443 -p 8081:8081 -v "$PWD/config.json:/xmr-node-proxy/config.json:ro" -v "$PWD/cert.key:/xmr-node-proxy/cert.key:ro" -v "$PWD/cert.pem:/xmr-node-proxy/cert.pem:ro" xmr-node-proxy
 ```
 
-## Minimal Config Example
+## Configuration
+
+Copy `config_example.json` to `config.json` and edit it for your deployment.
+
+### Minimal Config Example
 
 For a single MoneroOcean upstream over TLS:
 
@@ -235,6 +278,32 @@ MoneroOcean note:
 - If your miner provides a real MoneroOcean `algo-perf` map, pass it through so pool-side algo selection stays accurate
 - `algo-min-time` is optional; `0` still maps to the upstream pool's default stickiness window on `nodejs-pool`, which is effectively `60`
 
+### Important fields
+
+- `pools[]`: upstream pools
+- `pools[].share`: target balancing weight among active non-dev pools; `0` means backup-only
+- `pools[].default`: choose the default pool; if older configs mark more than one, the last one wins
+- `pools[].algo`, `pools[].algo_perf`, and optional `pools[].algo-min-time`: upstream algo declaration for pools such as MoneroOcean
+- `listeningPorts[]`: miner-facing ports and their starting difficulty
+- `difficultySettings`: local vardiff bounds shared across miner-facing ports
+- `accessControl`: optional wallet/password allowlist that reloads from disk
+- `httpEnable`, `httpAddress`, `httpPort`, `httpUser`, `httpPass`: built-in monitor and optional basic auth
+- `tls.keyPath`, `tls.certPath`: local certificate pair for SSL listening ports
+- `socketTimeoutMs`, `maxJsonLineBytes`: defensive limits for bad or stuck peers
+
+### Validation rules enforced at startup
+
+- At least one pool must exist
+- At least one listening port must exist
+- At least one default non-dev pool must exist
+- `difficultySettings.minDiff`, `difficultySettings.maxDiff`, and `difficultySettings.shareTargetTime` must all be positive, and `minDiff <= maxDiff`
+
+Notes:
+
+- `daemonAddress` is not used by the current runtime. Remove it from older configs.
+- Old `coinSettings` configs are rejected at startup. Rename that block to `difficultySettings`.
+- The sample config intentionally uses placeholder wallets. The built-in developer-share path is separate and only applies if `developerShare > 0`.
+
 ## Runtime
 
 Default `node proxy.js` mode uses all CPU cores available on the host.
@@ -265,7 +334,7 @@ PM2 best practice:
 
 ## Logs
 
-Logs now use one consistent format:
+Logs use one consistent format:
 
 ```text
 2026-04-19 08:13:08 INF master pool.job host=gulf.moneroocean.stream height=3387651 algo=rx/0 target=5000
@@ -283,34 +352,6 @@ Operational notes:
 - Warnings and errors include the fields you usually need first: `host`, `port`, `miner`, `job`, `nonce`, `reason`, `error`
 - If you are running behind another logger that already stamps lines, avoid adding a second timestamp layer
 - Set `XNP_LOG_TIME=0` if you want the proxy to emit `level component event ...` without its own timestamp prefix
-
-## Configuration Guide
-
-Important fields:
-
-- `pools[]`: upstream pools
-- `pools[].share`: target balancing weight among active non-dev pools; `0` means backup-only
-- `pools[].default`: choose the default pool; if older configs mark more than one, the last one wins
-- `pools[].algo`, `pools[].algo_perf`, and optional `pools[].algo-min-time`: upstream algo declaration for pools such as MoneroOcean
-- `listeningPorts[]`: miner-facing ports and their starting difficulty
-- `difficultySettings`: local vardiff bounds shared across miner-facing ports
-- `accessControl`: optional wallet/password allowlist that reloads from disk
-- `httpEnable`, `httpAddress`, `httpPort`, `httpUser`, `httpPass`: built-in monitor and optional basic auth
-- `tls.keyPath`, `tls.certPath`: local certificate pair for SSL listening ports
-- `socketTimeoutMs`, `maxJsonLineBytes`: defensive limits for bad or stuck peers
-
-Validation rules enforced at startup:
-
-- At least one pool must exist
-- At least one listening port must exist
-- At least one default non-dev pool must exist
-- `difficultySettings.minDiff`, `difficultySettings.maxDiff`, and `difficultySettings.shareTargetTime` must all be positive, and `minDiff <= maxDiff`
-
-Notes:
-
-- `daemonAddress` is not used by the current runtime. Remove it from older configs.
-- Old `coinSettings` configs are rejected at startup. Rename that block to `difficultySettings`.
-- The sample config intentionally uses placeholder wallets. The built-in developer-share path is separate and only applies if `developerShare > 0`.
 
 ## HTTP Monitor
 
@@ -344,11 +385,25 @@ Important limits:
 
 ## Testing
 
-The repo includes a local test suite. It does not need a live pool.
+The repo ships a local test suite that does not need a live pool. Native
+hashing modules must be built first (handled by `npm install`).
 
 ```bash
 npm test
 ```
+
+This runs the unit/integration suites in `tests/` (balance, cluster, common,
+monitor, pool, proxy, xmr) sequentially.
+
+A separate live suite exercises a real upstream and is not part of the default
+run:
+
+```bash
+npm run test:live
+```
+
+Skip `test:live` unless you have a reachable upstream pool configured, since it
+performs live network connections.
 
 ## Troubleshooting
 
@@ -374,7 +429,8 @@ Miners submit low-diff shares constantly
 
 ## Donations
 
-If you want to support the project directly, optional XMR donations can be sent to:
+If you want to support the project directly, optional XMR donations can be sent
+to:
 
 `89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL`
 
@@ -384,3 +440,21 @@ If you want to support the project directly, optional XMR donations can be sent 
 - Alexander Blair and [Snipa22](https://github.com/Snipa22) for the original public codebase and early architecture
 - djfinch, [M5M400](https://github.com/M5M400), Learner, Mike Teehan, Ethorsen, and tosokr for follow-up fixes, compatibility work, and docs
 - [1rV1N](https://github.com/1rV1N), MinerCircle, Mayday30, Connor, J. Meister, Mi!, Tom, mrmoo85, piratoskratos, slayerulan, sph34r, sunk818, sunxfof, tinyema, BK, and other smaller contributors for fixes and operational improvements
+
+## MoneroOcean ecosystem
+
+| Component | Role |
+| --- | --- |
+| [nodejs-pool](https://github.com/MoneroOcean/nodejs-pool) | Pool backend — stratum, share storage, payments |
+| [mo-pool-ui](https://github.com/MoneroOcean/mo-pool-ui) | Static web frontend for the pool |
+| [xmr-node-proxy](https://github.com/MoneroOcean/xmr-node-proxy) | Stratum proxy / share aggregator |
+| [mo-miner](https://github.com/MoneroOcean/mo-miner) | MoneroOcean end-user CPU/GPU mining client (multi-algo) |
+| [multi-miner](https://github.com/MoneroOcean/multi-miner) | Multi-algo miner manager |
+| [node-powhash](https://github.com/MoneroOcean/node-powhash) | Native multi-algo PoW hashing addon |
+| [node-randomx](https://github.com/MoneroOcean/node-randomx) | Native RandomX hashing addon |
+| [node-blocktemplate](https://github.com/MoneroOcean/node-blocktemplate) | Native block-template & serialization addon |
+| [grpc-json-proxy](https://github.com/MoneroOcean/grpc-json-proxy) | gRPC ↔ JSON-RPC proxy (Tari base node) |
+
+## License
+
+MIT — see [LICENSE](LICENSE).
