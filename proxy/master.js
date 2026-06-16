@@ -167,7 +167,7 @@ class MasterController {
         if (!handled) this.logger.debug("master", `Ignoring worker message ${message.type}`);
     }
     handleShareMessage(workerId, message) {
-        if (message.type !== "shareFind" && message.type !== "blockFind") return false;
+        if (message.type !== "shareFind") return false;
         const pool = this.pools.get(message.host);
         if (pool) pool.sendShare(workerId, message.data);
         return true;
