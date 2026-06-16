@@ -80,6 +80,10 @@ class MinerSession {
         this.lastContact = Date.now();
     }
 
+    elapsedSeconds() {
+        return Math.max(1, Math.floor((Date.now() - this.connectTime) / 1000));
+    }
+
     getNewJob(bypassCache = false) {
         const poolState = this.runtime.pools.get(this.pool);
         return this.coins.getJob(this, poolState.activeBlockTemplate, bypassCache);
@@ -105,13 +109,13 @@ class MinerSession {
 
     updateDifficulty() {
         if (this.hashes <= 0 || this.fixedDiff) return;
-        const elapsedSeconds = Math.max(1, Math.floor((Date.now() - this.connectTime) / 1000));
+        const elapsedSeconds = this.elapsedSeconds();
         const newDiff = Math.floor(this.hashes / elapsedSeconds) * this.difficultySettings.shareTargetTime;
         if (this.setNewDiff(newDiff)) this.pushNewJob();
     }
 
     stats() {
-        const elapsedSeconds = Math.max(1, Math.floor((Date.now() - this.connectTime) / 1000));
+        const elapsedSeconds = this.elapsedSeconds();
         return {
             active: !this.socket.destroyed,
             shares: this.shares,
