@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node proxy.js",
     "start:standalone": "node proxy.js --standalone",
+    "lint": "eslint .",
     "test": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/balance.js tests/cluster.js tests/common.js tests/monitor.js tests/pool.js tests/proxy.js tests/xmr.js",
     "test:live": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/live.js"
   },
@@ -46,5 +47,9 @@
   "dependencies": {
     "node-blocktemplate": "github:MoneroOcean/node-blocktemplate#v15.8.21",
     "node-powhash": "github:MoneroOcean/node-powhash#v29.2.6"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.4",
+    "globals": "^17.6.0"
   }
 }
