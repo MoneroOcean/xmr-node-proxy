@@ -112,27 +112,30 @@ function allocatePoolMiners(state, lowPools, freedMiners, changes, needed) {
     if (!(remainder <= 100)) takeDonorMiners(state, lowPools, changes, remainder);
 }
 function takeFreedMiners(changes, freedMiners, remainder) {
+    let remaining = remainder;
     for (const [minerKey, rate] of Object.entries(freedMiners)) {
-        if (rate > remainder) continue;
+        if (rate > remaining) continue;
         changes.push(minerKey);
-        remainder -= rate;
+        remaining -= rate;
         delete freedMiners[minerKey];
     }
-    return remainder;
+    return remaining;
 }
 function takeDonorMiners(state, lowPools, changes, remainder) {
+    let remaining = remainder;
     for (const donorPool of Object.keys(state.pools)) {
         if (donorPool in lowPools) continue;
-        remainder = takeFromDonorPool(state.pools[donorPool], changes, remainder);
-        if (remainder < 50) break;
+        remaining = takeFromDonorPool(state.pools[donorPool], changes, remaining);
+        if (remaining < 50) break;
     }
 }
 function takeFromDonorPool(donorState, changes, remainder) {
+    let remaining = remainder;
     for (const [minerKey, rate] of Object.entries(donorState.miners)) {
-        remainder = takeDonorMiner(donorState, changes, minerKey, rate, remainder);
-        if (remainder < 50) break;
+        remaining = takeDonorMiner(donorState, changes, minerKey, rate, remaining);
+        if (remaining < 50) break;
     }
-    return remainder;
+    return remaining;
 }
 function takeDonorMiner(donorState, changes, minerKey, rate, remainder) {
     if (rate === 0) return remainder;

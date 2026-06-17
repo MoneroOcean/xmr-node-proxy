@@ -129,7 +129,7 @@ class FakePool {
 
     pushTemplate(template) {
         this.template = template;
-        const payload = JSON.stringify({ method: "job", params: template }) + "\n";
+        const payload = `${JSON.stringify({ method: "job", params: template })  }\n`;
         for (const socket of this.sockets) {
             if (socket.writable) socket.write(payload);
         }

@@ -363,10 +363,9 @@ class MinerProtocol {
     handleSubmit(socket, params, reply, replyFinal) {
         const submitState = this.getSubmitState(socket, params, reply, replyFinal);
         if (!submitState) return;
-        ({ params } = submitState);
-        const { miner } = submitState;
-        if (typeof params.job_id === "number") params.job_id = String(params.job_id);
-        this.processSubmit(miner, params, reply);
+        const { params: submitParams, miner } = submitState;
+        if (typeof submitParams.job_id === "number") submitParams.job_id = String(submitParams.job_id);
+        this.processSubmit(miner, submitParams, reply);
     }
     processSubmit(miner, params, reply) {
         const job = this.getSubmitJob(miner, params, reply);
@@ -380,12 +379,12 @@ class MinerProtocol {
         this.processAcceptedShare(miner, job, blockTemplate, params, reply);
     }
     getSubmitState(socket, params, reply, replyFinal) {
-        params = this.getParams(params, replyFinal);
-        if (!params) return null;
-        const miner = this.getMiner(params.id || socket.minerId, reply);
+        const resolvedParams = this.getParams(params, replyFinal);
+        if (!resolvedParams) return null;
+        const miner = this.getMiner(resolvedParams.id || socket.minerId, reply);
         if (!miner) return null;
         miner.heartbeat();
-        return { params, miner };
+        return { params: resolvedParams, miner };
     }
     getSubmitJob(miner, params, reply) {
         const job = miner.validJobs.toarray().find((entry) => entry.id === params.job_id);
@@ -454,9 +453,9 @@ class MinerProtocol {
     }
 
     handleKeepalive(socket, params, reply, replyFinal) {
-        params = this.getParams(params, replyFinal);
-        if (!params) return;
-        const miner = this.getMiner(socket.minerId || params.id, replyFinal);
+        const resolvedParams = this.getParams(params, replyFinal);
+        if (!resolvedParams) return;
+        const miner = this.getMiner(socket.minerId || resolvedParams.id, replyFinal);
         if (!miner) return;
         miner.heartbeat();
         this.runtime.reportMinerStat(miner.id, miner);

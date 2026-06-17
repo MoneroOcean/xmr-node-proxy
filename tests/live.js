@@ -497,8 +497,8 @@ function withArtifactPaths(message, context, details = null) {
     if (!context) return message;
 
     return `${message}\n\nArtifacts: ${context.artifactDir}`
-        + `\nProxy log: ${context.proxyHandle.combined.filePath}`
-        + (details?.minerLogPath ? `\nMiner log: ${details.minerLogPath}` : "");
+        + `\nProxy log: ${context.proxyHandle.combined.filePath}${
+         details?.minerLogPath ? `\nMiner log: ${details.minerLogPath}` : ""}`;
 }
 
 async function waitForProxyReady(proxyHandle, proxyPort, upstreamHost, upstreamTimeoutMs = 30_000) {

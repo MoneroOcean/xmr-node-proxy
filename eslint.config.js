@@ -14,5 +14,22 @@ module.exports = [
     rules: {
       "no-unused-vars": ["error", { args: "after-used", argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "all", caughtErrorsIgnorePattern: "^_" }]
     }
+  },
+  {
+    files: ["**/*.js"],
+    rules: {
+      "no-throw-literal": "error",
+      "default-case-last": "error",
+      "no-unused-expressions": "error",
+      "no-var": "error",
+      "no-else-return": "error",
+      "prefer-const": "error",
+      "eqeqeq": ["error", "always", { "null": "ignore" }],
+      "no-implicit-coercion": "error",
+      "object-shorthand": "error",
+      "prefer-template": "error",
+      "no-shadow": "error",
+      "no-param-reassign": "error"
+    }
   }
 ];

@@ -538,14 +538,15 @@ function createLineParser({ maxBufferBytes = MAX_JSON_LINE_BYTES, onLine, onOver
     };
 }
 function flushJsonLines(buffer, onLine) {
-    let index = buffer.indexOf("\n");
+    let remaining = buffer;
+    let index = remaining.indexOf("\n");
     while (index !== -1) {
-        const line = buffer.slice(0, index).trim();
-        buffer = buffer.slice(index + 1);
+        const line = remaining.slice(0, index).trim();
+        remaining = remaining.slice(index + 1);
         if (line) onLine(line);
-        index = buffer.indexOf("\n");
+        index = remaining.indexOf("\n");
     }
-    return buffer;
+    return remaining;
 }
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
