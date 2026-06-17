@@ -6,6 +6,25 @@ const test = require("node:test");
 const { ProxyMonitor } = require("../proxy/monitor");
 
 test.describe("xmr-node-proxy monitor", { concurrency: false }, () => {
+    test("monitor server error is logged, not rethrown (no proxy crash)", async () => {
+        const errors = [];
+        const monitor = new ProxyMonitor({
+            config: { httpEnable: true, httpPort: 0, httpAddress: "127.0.0.1" },
+            logger: { info() {}, error(message, meta) { errors.push({ message, meta }); } },
+            runtime: {}
+        });
+        monitor.start();
+        await new Promise((resolve) => monitor.server.once("listening", resolve));
+        // Previously the server had no 'error' listener, so this emit would be rethrown
+        // by EventEmitter and crash the whole proxy.
+        assert.doesNotThrow(() => {
+            monitor.server.emit("error", Object.assign(new Error("synthetic accept failure"), { code: "EMFILE" }));
+        });
+        assert.equal(errors.length, 1);
+        assert.equal(errors[0].message, "monitor.error");
+        await monitor.stop();
+    });
+
     test("ProxyMonitor renders theme toggle, sortable headers, tooltip polish, and MoneroOcean links", () => {
         const monitor = new ProxyMonitor({
             config: { theme: "light", refreshTime: 30, httpEnable: true },

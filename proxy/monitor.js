@@ -14,6 +14,12 @@ class ProxyMonitor {
     start() {
         if (!this.config.httpEnable || this.server) return;
         this.server = http.createServer((request, response) => this.handleRequest(request, response));
+        // The monitor is a non-critical stats endpoint; a server error (e.g. EADDRINUSE
+        // on listen, or an accept-time socket error) must be logged rather than rethrown
+        // by EventEmitter as an uncaught exception that would take down the whole proxy.
+        this.server.on("error", (error) => {
+            this.logger.error("monitor.error", { message: error && error.message });
+        });
         this.server.listen(this.config.httpPort, this.config.httpAddress, () => {
             const address = this.server.address();
             this.logger.info("monitor.ready", {
