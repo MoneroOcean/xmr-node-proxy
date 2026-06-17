@@ -10,6 +10,7 @@
     "start": "node proxy.js",
     "start:standalone": "node proxy.js --standalone",
     "lint": "eslint .",
+    "pretest": "npm run lint",
     "test": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/balance.js tests/cluster.js tests/common.js tests/monitor.js tests/pool.js tests/proxy.js tests/xmr.js",
     "test:live": "node --require ./tests/common/test_output_buffer.js --test --test-reporter=./tests/common/spec_reporter.js --test-concurrency=1 tests/live.js"
   },
