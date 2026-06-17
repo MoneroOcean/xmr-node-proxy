@@ -12,9 +12,7 @@ module.exports = [
       globals: { ...globals.node }
     },
     rules: {
-      "no-unused-vars": ["error", { args: "after-used", argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "all", caughtErrorsIgnorePattern: "^_" }],
-      // Intentional ANSI escape sequence handling in test output stripping; the ESC control char is required.
-      "no-control-regex": "off"
+      "no-unused-vars": ["error", { args: "after-used", argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrors: "all", caughtErrorsIgnorePattern: "^_" }]
     }
   }
 ];

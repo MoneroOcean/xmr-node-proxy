@@ -19,6 +19,7 @@ const DEFAULT_ARTIFACT_ROOT = path.join(ROOT_DIR, "test-artifacts", "live-xnp");
 const DEFAULT_WALLET = "89TxfrUmqJJcb1V124WsUzA78Xa3UYHt7Bg8RGMhXVeZYPN8cE5CZEk58Y1m23ZMLHN7wYeJ9da5n5MXharEjrm41hSnWHL";
 const XMRIG_RELEASE_API = "https://api.github.com/repos/MoneroOcean/xmrig/releases/latest";
 const USER_AGENT = "xmr-node-proxy-live-tests";
+// eslint-disable-next-line no-control-regex -- intentional ANSI escape (ESC control char) for stripping terminal color codes from captured miner output
 const ANSI_ESCAPE_PATTERN = /\u001b\[[0-9;?]*[A-Za-z]/g;
 const DEFAULT_TIMEOUT_MS = 8 * 60_000;
 const POST_SUBMIT_GRACE_MS = 2_000;
