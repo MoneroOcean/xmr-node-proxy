@@ -213,7 +213,12 @@ function createTemplateTools(options = {}) {
             poolState.workerJobs = new Map();
         }
         if (!poolState.workerJobs.has(workerId)) {
-            poolState.workerJobs.set(workerId, new CircularBuffer(4));
+            // Must hold at least as many jobs as the deepest job a worker will forward a share for,
+            // i.e. the worker's validJobs window (miner.js, CircularBuffer(5)) and its active +
+            // pastBlockTemplates(4) block-difficulty window. With only 4 here, a genuine found-block
+            // share for the 5th-oldest-but-still-valid job missed sendShare's lookup and was silently
+            // dropped (a lost block). Sized above that window with headroom for rotation skew.
+            poolState.workerJobs.set(workerId, new CircularBuffer(8));
         }
         poolState.workerJobs.get(workerId).enq(localData);
         return workerData;

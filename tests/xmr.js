@@ -194,6 +194,41 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
         assert.equal(tools.getJob(grinMiner, template, true).algo, "cuckaroo");
     });
 
+    test("getMasterJob retains enough worker jobs to map a found-block share for an older-but-valid job", () => {
+        const tools = createTemplateTools({
+            blobTypeGrin: () => false,
+            c29ProofSize: () => 32,
+            convertBlob: (buffer) => Buffer.from(buffer),
+            nonceSize: () => 4,
+            parseBlobType: () => 0
+        });
+        const poolState = {
+            activeBlockTemplate: {
+                algo: "rx/0",
+                blobForWorker: () => "00".repeat(40),
+                blob_type: 0,
+                coin: "",
+                difficulty: 100,
+                height: 1,
+                job_id: "master-1",
+                poolNonce: 0,
+                reservedOffset: 0,
+                seed_hash: "00".repeat(32),
+                targetDiff: 100,
+                targetHex: "ff",
+                variant: 0,
+                workerOffset: 4
+            }
+        };
+
+        // The worker accepts a block-difficulty (found-block) share across its validJobs window
+        // (CircularBuffer(5)); the master must remember at least that many jobs per worker or a
+        // genuine found block on the 5th-oldest-but-still-valid job is silently dropped by sendShare.
+        // With the old CircularBuffer(4) only the last 4 of these 6 would survive (length 4).
+        for (let index = 0; index < 6; index += 1) tools.getMasterJob(poolState, "worker-A");
+        assert.equal(poolState.workerJobs.get("worker-A").toarray().length, 6);
+    });
+
     test("acceptNonce caps the per-job submissions list to bound memory and CPU", () => {
         const warnings = [];
         const protocol = new MinerProtocol({
