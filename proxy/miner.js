@@ -3,6 +3,13 @@
 const { CircularBuffer, createLineParser, randomId, respondToHttpProbe, writeJsonLine } = require("./common");
 const NONCE_32_HEX = /^[0-9a-f]{8}$/;
 const NONCE_64_HEX = /^[0-9a-f]{16}$/;
+// Cap the per-job nonce dedup list. The list is appended for every
+// well-formed submit before any difficulty/validity gate, and each submit
+// runs an O(n) Array.includes over it, so an unbounded list lets a single
+// connection drive unbounded memory and O(n^2) CPU against one live job. A
+// legitimate miner submits far fewer distinct nonces against one job before
+// it rotates out of the validJobs buffer, so this only trips on abuse.
+const MAX_JOB_SUBMISSIONS = 10000;
 const METHOD_HANDLERS = new Map([
     ["login", (protocol, socket, request, portData, pushMessage, reply, replyFinal) => protocol.handleLogin(socket, request, portData, pushMessage, reply, replyFinal)],
     ["getjobtemplate", (protocol, socket, _request, _portData, _pushMessage, reply) => protocol.handleGetJobTemplate(socket, reply)],
@@ -401,6 +408,11 @@ class MinerProtocol {
         const nonceKey = miner.coins.blobTypeGrin(job.blob_type) ? params.pow.join(":") : params.nonce;
         if (job.submissions.includes(nonceKey)) {
             this.runtime.logger.warn("share.duplicate", { miner: miner.logString, job: params.job_id, nonce: nonceKey });
+            reply("Duplicate share");
+            return false;
+        }
+        if (job.submissions.length >= MAX_JOB_SUBMISSIONS) {
+            this.runtime.logger.warn("share.submission_cap", { miner: miner.logString, job: params.job_id, limit: MAX_JOB_SUBMISSIONS });
             reply("Duplicate share");
             return false;
         }

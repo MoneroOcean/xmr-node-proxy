@@ -7,6 +7,7 @@ const test = require("node:test");
 const createCoins = require("../coins/core");
 const { createTemplateTools } = require("../coins/template");
 const { CircularBuffer } = require("../proxy/common");
+const { MinerProtocol } = require("../proxy/miner");
 const { createRavenTemplateBlob } = require("./common/harness");
 
 function createProxyTemplate(overrides = {}) {
@@ -191,5 +192,38 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
         assert.equal(tools.getJob(miner, template, true).algo, "rx/test");
         assert.equal(tools.getJob(grinMiner, template, true).algo, "cuckaroo");
+    });
+
+    test("acceptNonce caps the per-job submissions list to bound memory and CPU", () => {
+        const warnings = [];
+        const protocol = new MinerProtocol({
+            logger: { warn: (event, meta) => warnings.push({ event, meta }) }
+        });
+        const miner = {
+            logString: "test-miner",
+            coins: { blobTypeGrin: () => false, nonceSize: () => 4 }
+        };
+        const job = { blob_type: 0, job_id: "job-cap", submissions: [] };
+
+        // Distinct, well-formed nonces are accepted only up to the cap.
+        let accepted = 0;
+        let rejected = 0;
+        for (let i = 0; i < 10050; i += 1) {
+            const nonce = i.toString(16).padStart(8, "0");
+            const ok = protocol.acceptNonce(miner, job, { job_id: "job-cap", nonce }, () => {});
+            if (ok) accepted += 1;
+            else rejected += 1;
+        }
+
+        assert.equal(job.submissions.length, 10000);
+        assert.equal(accepted, 10000);
+        assert.equal(rejected, 50);
+        assert.ok(warnings.some((entry) => entry.event === "share.submission_cap"));
+
+        // A previously-seen nonce is still reported as a duplicate, not a cap hit.
+        const duplicateReplies = [];
+        const dupOk = protocol.acceptNonce(miner, job, { job_id: "job-cap", nonce: "00000000" }, (msg) => duplicateReplies.push(msg));
+        assert.equal(dupOk, false);
+        assert.deepEqual(duplicateReplies, ["Duplicate share"]);
     });
 });
