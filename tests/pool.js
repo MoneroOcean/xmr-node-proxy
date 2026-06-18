@@ -150,6 +150,17 @@ function attachJsonHandler(socket, onMessage) {
 }
 
 test.describe("xmr-node-proxy upstream pool client", { concurrency: false }, () => {
+    test("handleLine bails when an earlier line in the same chunk tore down the socket (no null-deref crash)", () => {
+        const { client } = createClient(1);
+        // Simulate destroySocket() having run while processing an earlier line of the same TCP chunk
+        // (e.g. a pending-template error or a template that failed to activate): this.socket is null.
+        client.socket = null;
+        // A buffered HTTP-probe line and a malformed-JSON line must NOT dereference the null socket
+        // (respondToHttpProbe / this.socket.destroy) -- which would throw and crash the master.
+        assert.doesNotThrow(() => client.handleLine("GET / HTTP/1.1"));
+        assert.doesNotThrow(() => client.handleLine("{ truncated json"));
+    });
+
     test("UpstreamPoolClient retries quickly when MO says the template is not ready yet", async () => {
         let loginAttempts = 0;
         const server = net.createServer((socket) => {

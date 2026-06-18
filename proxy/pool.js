@@ -230,6 +230,12 @@ class UpstreamPoolClient {
         this.lastCommonAlgoNotifyTime = now;
     }
     handleLine(line) {
+        // The line parser flushes every complete line in a TCP chunk synchronously, so an earlier
+        // line on this same chunk may have already torn the socket down (destroySocket sets
+        // this.socket = null -- e.g. a pending-template error, a template that fails to activate, or
+        // a reconnect). Bail instead of dereferencing a null socket in respondToHttpProbe /
+        // this.socket.destroy below, which would throw an uncaught TypeError and crash the master.
+        if (!this.socket) return;
         if (respondToHttpProbe(this.socket, line)) return;
         let message;
         try {
