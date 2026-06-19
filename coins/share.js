@@ -144,6 +144,13 @@ function createShareProcessor(options) {
             return false;
         }
         submitPoolShare(context.miner, context.job, context.blockTemplate, context.params, context.onPoolShare);
+        logIfAvailable(context.info, "share.block_found", {
+            miner: context.miner.logString,
+            pool: context.miner.pool,
+            coin: context.blockTemplate.coin,
+            height: context.blockTemplate.height,
+            nonce: context.params.nonce
+        });
         recordPoolShare(context.miner.pool, Number(context.poolTargetDiff), context.info);
         context.miner.shares += 1;
         context.miner.hashes += normalizeDifficulty(context.job.difficulty);

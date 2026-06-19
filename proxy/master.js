@@ -129,7 +129,7 @@ class MasterController {
         return templateCopy;
     }
     detectTemplateAlgo(pool, templateCopy) {
-        const blockVersion = templateCopy.blocktemplate_blob ? parseInt(templateCopy.blocktemplate_blob.slice(0, 2), 16) : 0;
+        const blockVersion = typeof templateCopy.blocktemplate_blob === "string" ? parseInt(templateCopy.blocktemplate_blob.slice(0, 2), 16) : 0;
         return pool.coins.detectAlgo(pool.defaultAlgoSet, blockVersion);
     }
     activatePoolTemplate(pool, templateCopy) {
