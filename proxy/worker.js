@@ -37,8 +37,11 @@ class WorkerController {
     }
     async stop() {
         this.stopTimers();
-        await this.stopServers();
+        // Destroy the keep-alive miner sockets BEFORE draining the servers: Server.close() only
+        // resolves once all accepted connections close, so server-drain-first deadlocks while any
+        // miner is connected (the normal state).
         this.stopMiners();
+        await this.stopServers();
     }
     stopTimers() {
         for (const timer of [this.updateDiffTimer, this.publishStatsTimer, this.failoverTimer]) clearTimer(timer);
@@ -135,14 +138,24 @@ class WorkerController {
         if (message.type !== "newBlockTemplate") return false;
         const pool = this.pools.get(message.host);
         if (!pool) return true;
-        this.setNewBlockTemplate(pool, message.data);
+        if (!this.setNewBlockTemplate(pool, message.data)) return true; // bad template; keep last good
         this.pushPoolJobs(message.host);
         return true;
     }
     setNewBlockTemplate(pool, data) {
+        let template;
+        try {
+            template = new pool.coins.BlockTemplate(data);
+        } catch (error) {
+            // A malformed upstream template (e.g. out-of-range offsets) must not crash the worker;
+            // reject it and keep serving the last good template.
+            this.logger.error("pool.bad_template", { error: error.message });
+            return false;
+        }
         if (pool.activeBlockTemplate) pool.pastBlockTemplates.enq(pool.activeBlockTemplate);
         pool.active = true;
-        pool.activeBlockTemplate = new pool.coins.BlockTemplate(data);
+        pool.activeBlockTemplate = template;
+        return true;
     }
     pushPoolJobs(hostname) {
         for (const miner of this.activeMiners.values()) {

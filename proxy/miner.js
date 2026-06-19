@@ -94,11 +94,16 @@ class MinerSession {
 
     getNewJob(bypassCache = false) {
         const poolState = this.runtime.pools.get(this.pool);
+        // Failover can reassign a logged-in miner onto a pool that never received a template
+        // (chooseInitialPool falls back to an unusable default), leaving activeBlockTemplate null.
+        // Guard so getJob isn't called with null (TypeError -> worker crash); mirror the login guard.
+        if (!poolState || !poolState.activeBlockTemplate) return null;
         return this.coins.getJob(this, poolState.activeBlockTemplate, bypassCache);
     }
 
     pushNewJob(bypassCache = false) {
         const job = this.getNewJob(bypassCache);
+        if (!job) return; // no usable template (e.g. failover onto a template-less pool); skip this push
         if (this.protocol === "grin") {
             this.pushMessage({ method: "getjobtemplate", result: job });
         } else {
@@ -348,7 +353,12 @@ class MinerProtocol {
     removeDuplicateOfflineMiners(miner) {
         for (const [minerId, activeMiner] of this.runtime.activeMiners) {
             if (skipOfflineDuplicateCheck(minerId, activeMiner, miner)) continue;
-            if (sameMinerIdentity(activeMiner, miner)) this.runtime.activeMiners.delete(minerId);
+            if (sameMinerIdentity(activeMiner, miner)) {
+                this.runtime.activeMiners.delete(minerId);
+                // Mirror the 'close' handler: drop the master-side stat too, else the worker stops
+                // reporting this minerId while the master keeps a stale snapshot (double-count).
+                this.runtime.removeMinerStat(minerId);
+            }
         }
     }
     handleGetJobTemplate(socket, reply) {
@@ -420,7 +430,11 @@ class MinerProtocol {
         return true;
     }
     findBlockTemplate(miner, job) {
-        const poolState = this.runtime.pools.get(miner.pool);
+        // Resolve against the pool the JOB was created for (job.poolId), not miner.pool — a mid-session
+        // rebalance/failover rewrites miner.pool, which would miss the in-flight job's template and
+        // drop a block-difficulty share as "Block expired".
+        const poolState = this.runtime.pools.get(job.poolId || miner.pool);
+        if (!poolState) return undefined;
         if (poolState.activeBlockTemplate && poolState.activeBlockTemplate.id === job.templateID) return poolState.activeBlockTemplate;
         return poolState.pastBlockTemplates.toarray().find((entry) => entry.id === job.templateID);
     }

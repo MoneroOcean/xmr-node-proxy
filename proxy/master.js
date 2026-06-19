@@ -114,7 +114,10 @@ class MasterController {
         }
     }
     isDuplicateTemplate(pool, templateCopy) {
-        return Boolean(pool.activeBlockTemplate) && pool.activeBlockTemplate.job_id === templateCopy.job_id;
+        // Dedup on the actual work (blob), not job_id alone: a new block that reuses/omits job_id must
+        // still be pushed, else miners keep mining the stale height. blocktemplate_blob is unique per block.
+        const prev = pool.activeBlockTemplate;
+        return Boolean(prev) && prev.blocktemplate_blob === templateCopy.blocktemplate_blob;
     }
     rejectPoolTemplate(pool, event, reason) {
         this.logger.error(event, { host: pool.hostname });

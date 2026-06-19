@@ -41,6 +41,31 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
         assert.match(template.targetHex, /^[0-9a-f]{8}$/);
     });
 
+    test("MasterBlockTemplate rejects an out-of-range pool offset instead of crashing (RangeError)", () => {
+        const coins = createCoins({ instanceId: INSTANCE_ID });
+        // non-solo template whose client_pool_offset points past the 160-byte blob
+        assert.throws(
+            () => new coins.MasterBlockTemplate(createProxyTemplate({ client_nonce_offset: 8, client_pool_offset: 200 })),
+            /out of range/
+        );
+    });
+
+    test("MasterBlockTemplate rejects an out-of-range reserved offset (solo) instead of crashing", () => {
+        const coins = createCoins({ instanceId: INSTANCE_ID });
+        assert.throws(
+            () => new coins.MasterBlockTemplate(createProxyTemplate({ reserved_offset: 200 })),
+            /out of range/
+        );
+    });
+
+    test("WorkerBlockTemplate rejects an out-of-range worker offset instead of crashing", () => {
+        const coins = createCoins({ instanceId: INSTANCE_ID });
+        assert.throws(
+            () => new coins.BlockTemplate(createProxyTemplate({ worker_offset: 200 })),
+            /out of range/
+        );
+    });
+
     test("processShare handles floating pool target difficulty without throwing", () => {
         const coins = createCoins({
             instanceId: INSTANCE_ID

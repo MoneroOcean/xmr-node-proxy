@@ -17,6 +17,14 @@ function getTargetHex(difficulty, size) {
     const diffBuffer = bigIntToBufferBE(BASE_DIFF / diff, 32);
     return Buffer.from(diffBuffer.subarray(0, size)).reverse().toString("hex");
 }
+function assertBlobOffset(offset, need, bufferLength, name) {
+    // Upstream-supplied blob offsets are written via writeUInt32BE; an out-of-range value throws an
+    // uncaught RangeError that crashes the worker/master. Validate against the actual blob length so a
+    // malformed/hostile upstream template is rejected (caught by the template-build try/catch) instead.
+    if (!Number.isInteger(offset) || offset < 0 || offset + need > bufferLength) {
+        throw new Error(`Upstream template ${name} ${offset} out of range for ${bufferLength}-byte blob`);
+    }
+}
 
 function createTemplateTools(options = {}) {
     const {
@@ -53,8 +61,11 @@ function createTemplateTools(options = {}) {
 
             if (this.workerOffset === undefined) {
                 this.solo = true;
+                assertBlobOffset(this.reservedOffset, 7, this.buffer.length, "reserved_offset");
                 instanceId.copy(this.buffer, this.reservedOffset + 4, 0, 3);
                 this.buffer.copy(this.previousHash, 0, 7, 39);
+            } else {
+                assertBlobOffset(this.workerOffset, 4, this.buffer.length, "worker_offset");
             }
         }
 
@@ -96,10 +107,13 @@ function createTemplateTools(options = {}) {
 
             if (this.workerOffset === undefined) {
                 this.solo = true;
+                assertBlobOffset(this.reservedOffset, 7, this.buffer.length, "reserved_offset");
                 instanceId.copy(this.buffer, this.reservedOffset + 4, 0, 3);
                 this.buffer.copy(this.previousHash, 0, 7, 39);
             } else if (this.poolOffset === undefined) {
                 throw new Error("Upstream pool is missing client_pool_offset and is not compatible with proxy mining");
+            } else {
+                assertBlobOffset(this.poolOffset, 4, this.buffer.length, "client_pool_offset");
             }
         }
 
@@ -136,7 +150,8 @@ function createTemplateTools(options = {}) {
             difficulty: miner.difficulty,
             diffHex: getTargetHex(miner.difficulty, nonceSize(activeBlockTemplate.blob_type)),
             submissions: [],
-            templateID: activeBlockTemplate.id
+            templateID: activeBlockTemplate.id,
+            poolId: miner.pool
         };
     }
     function buildGrinJob(miner, activeBlockTemplate, newJob, blob) {

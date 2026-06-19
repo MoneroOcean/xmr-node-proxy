@@ -119,14 +119,15 @@ class UpstreamPoolClient {
 
         socket.on(this.ssl ? "secureConnect" : "connect", () => {
             this.connected = true;
-            this.enabled = true;
             this.poolId = null;
             this.logger.info("pool.connect", {
                 host: this.hostname,
                 port: this.port,
                 tls: this.ssl
             });
-            this.master.broadcast({ type: "enablePool", pool: this.hostname });
+            // Do NOT enable the pool here: enabling before a fresh template re-serves the last
+            // pre-outage template (stale work). activatePoolTemplate enables the pool and broadcasts
+            // enablePool once the first fresh template after login is processed.
             this.login();
         });
         socket.on("data", (chunk) => this.lineParser.push(chunk));
@@ -156,6 +157,9 @@ class UpstreamPoolClient {
     markUnavailable(reason) {
         this.connected = false;
         this.enabled = false;
+        // Drop the active template so it can't be re-served stale on reconnect, and so the first fresh
+        // template after reconnect is never deduped away (isDuplicateTemplate then sees no prev).
+        this.activeBlockTemplate = null;
         this.logger.warn("pool.down", {
             host: this.hostname,
             reason
