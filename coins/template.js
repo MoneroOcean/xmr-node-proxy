@@ -227,4 +227,4 @@ function createTemplateTools(options = {}) {
     return { BlockTemplate: WorkerBlockTemplate, MasterBlockTemplate, getJob, getMasterJob };
 }
 
-module.exports = { createTemplateTools, getTargetHex, normalizeDifficulty };
+module.exports = { createTemplateTools, normalizeDifficulty };

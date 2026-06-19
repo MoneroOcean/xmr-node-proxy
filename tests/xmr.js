@@ -10,6 +10,8 @@ const { CircularBuffer } = require("../proxy/common");
 const { MinerProtocol } = require("../proxy/miner");
 const { createRavenTemplateBlob } = require("./common/harness");
 
+const INSTANCE_ID = Buffer.from([1, 2, 3]);
+
 function createProxyTemplate(overrides = {}) {
     return {
         blocktemplate_blob: Buffer.alloc(160).toString("hex"),
@@ -29,7 +31,7 @@ function createProxyTemplate(overrides = {}) {
 test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
     test("MasterBlockTemplate normalizes floating upstream pool target difficulty", () => {
         const coins = createCoins({
-            instanceId: Buffer.from([1, 2, 3])
+            instanceId: INSTANCE_ID
         });
 
         const template = new coins.MasterBlockTemplate(createProxyTemplate());
@@ -41,7 +43,7 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
     test("processShare handles floating pool target difficulty without throwing", () => {
         const coins = createCoins({
-            instanceId: Buffer.from([1, 2, 3])
+            instanceId: INSTANCE_ID
         });
         const warnings = [];
         const miner = {
@@ -73,7 +75,7 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
     test("processShare verifies KawPoW mixhash before forwarding pool shares", () => {
         const coins = createCoins({
-            instanceId: Buffer.from([1, 2, 3])
+            instanceId: INSTANCE_ID
         });
         const miner = {
             blocks: 0,
@@ -145,7 +147,7 @@ test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
 
     test("parseBlobType handles non-string objects without prototype lookups", () => {
         const coins = createCoins({
-            instanceId: Buffer.from([1, 2, 3])
+            instanceId: INSTANCE_ID
         });
 
         assert.equal(coins.parseBlobType("cryptonote_arq"), 16);
