@@ -129,8 +129,8 @@ test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
         assert.equal("algo-min-time" in config.pools[0], false);
     });
 
-    test("normalizeConfig rejects legacy coinSettings with an upgrade message", () => {
-        assert.throws(() => normalizeConfig({
+    test("normalizeConfig accepts legacy coinSettings.xmr as a compatibility fallback", () => {
+        const config = normalizeConfig({
             pools: [
                 {
                     hostname: "pool.example.com",
@@ -151,7 +151,13 @@ test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
                     shareTargetTime: 45
                 }
             }
-        }, path.join(os.tmpdir(), "config.json")), /rename it to difficultySettings and update your config/);
+        }, path.join(os.tmpdir(), "config.json"));
+
+        assert.deepEqual(config.difficultySettings, {
+            minDiff: 2,
+            maxDiff: 2000,
+            shareTargetTime: 45
+        });
     });
 
     test("parseArgs preserves inline values and ignores invalid flag forms like the legacy parser", () => {

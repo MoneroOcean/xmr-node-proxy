@@ -299,8 +299,11 @@ function normalizeConfig(rawConfig, configPath) {
         ...remainingConfig
     } = rawConfig;
 
-    if (rawDifficultySettings === undefined && legacyCoinSettings !== undefined) {
-        throw new Error("config.coinSettings is no longer supported; rename it to difficultySettings and update your config");
+    const difficultySettings = rawDifficultySettings === undefined
+        ? legacyCoinSettings?.xmr
+        : rawDifficultySettings;
+    if (difficultySettings === undefined && legacyCoinSettings !== undefined) {
+        throw new Error("config.coinSettings compatibility requires an xmr entry; migrate it to difficultySettings");
     }
     const configDir = path.dirname(configPath);
     const pools = normalizeList(rawConfig.pools, normalizePoolConfig);
@@ -312,7 +315,7 @@ function normalizeConfig(rawConfig, configPath) {
         accessControl: normalizeAccessControl(rawConfig.accessControl, configDir),
         ...normalizeGeneralConfig(rawConfig),
         tls: normalizeTls(rawConfig.tls, configDir),
-        difficultySettings: normalizeDifficultySettings(rawDifficultySettings)
+        difficultySettings: normalizeDifficultySettings(difficultySettings)
     };
     validateConfig(config);
     return config;

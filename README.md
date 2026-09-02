@@ -301,7 +301,7 @@ MoneroOcean note:
 Notes:
 
 - `daemonAddress` is not used by the current runtime. Remove it from older configs.
-- Old `coinSettings` configs are rejected at startup. Rename that block to `difficultySettings`.
+- Old `"coinSettings": { "xmr": { ... } }` configs remain supported as a compatibility fallback. New configs should use the flat `"difficultySettings": { ... }` form.
 - The sample config intentionally uses placeholder wallets. The built-in developer-share path is separate and only applies if `developerShare > 0`.
 
 ## Runtime
