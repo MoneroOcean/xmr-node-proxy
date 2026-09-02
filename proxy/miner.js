@@ -3,6 +3,8 @@
 const { CircularBuffer, createLineParser, randomId, respondToHttpProbe, writeJsonLine } = require("./common");
 const NONCE_32_HEX = /^[0-9a-f]{8}$/;
 const NONCE_64_HEX = /^[0-9a-f]{16}$/;
+const NOISY_WARNING_INTERVAL_MS = 30_000;
+const ROUTINE_SOCKET_ERROR_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT"]);
 // Cap the per-job nonce dedup list. The list is appended for every
 // well-formed submit before any difficulty/validity gate, and each submit
 // runs an O(n) Array.includes over it, so an unbounded list lets a single
@@ -198,13 +200,29 @@ function warnUnsupportedAlgo(miner, poolState) {
 class MinerProtocol {
     constructor(runtime) {
         this.runtime = runtime;
+        this.noisyWarnings = new Map();
+    }
+
+    warnNoisy(event, meta) {
+        const now = Date.now();
+        const state = this.noisyWarnings.get(event);
+        if (state && (now - state.loggedAt) < NOISY_WARNING_INTERVAL_MS) {
+            state.suppressed += 1;
+            return;
+        }
+        this.runtime.logger.warn(event, {
+            ...meta,
+            suppressed: state?.suppressed || undefined
+        });
+        this.noisyWarnings.set(event, { loggedAt: now, suppressed: 0 });
     }
 
     attachSocket(socket, portData) {
         socket.setKeepAlive(true);
         socket.setEncoding("utf8");
         socket.setTimeout(this.runtime.config.socketTimeoutMs, () => {
-            socket.destroy(new Error("Miner socket timeout"));
+            this.runtime.logger.debug("miner", "socket_timeout", { remote: socket.remoteAddress });
+            socket.destroy();
         });
 
         const pushMessage = (payload) => {
@@ -215,22 +233,23 @@ class MinerProtocol {
         const parser = createLineParser({
             maxBufferBytes: this.runtime.config.maxJsonLineBytes,
             onOverflow: () => {
-                this.runtime.logger.warn("miner.line_too_large", {
+                this.warnNoisy("miner.line_too_large", {
                     remote: socket.remoteAddress,
                     limit: this.runtime.config.maxJsonLineBytes
                 });
-                socket.destroy(new Error("Packet exceeded max line length"));
+                socket.destroy();
             },
             onLine: (line) => {
+                if (socket.destroyed) return;
                 if (respondToHttpProbe(socket, line)) return;
                 let jsonData;
                 try {
                     jsonData = JSON.parse(line);
                 } catch (_error) {
-                    this.runtime.logger.warn("miner.bad_json", {
+                    this.warnNoisy("miner.bad_json", {
                         remote: socket.remoteAddress
                     });
-                    socket.destroy(new Error("Malformed miner JSON"));
+                    socket.destroy();
                     return;
                 }
                 this.handleMessage(socket, jsonData, portData, pushMessage);
@@ -239,11 +258,14 @@ class MinerProtocol {
 
         socket.on("data", (chunk) => parser.push(chunk));
         socket.on("error", (error) => {
-            if (error.code !== "ECONNRESET") {
-                this.runtime.logger.warn("miner.socket_error", {
-                    remote: socket.remoteAddress,
-                    error: error.message
-                });
+            const meta = {
+                remote: socket.remoteAddress,
+                error: error.message
+            };
+            if (ROUTINE_SOCKET_ERROR_CODES.has(error.code)) {
+                this.runtime.logger.debug("miner", "socket_disconnect", meta);
+            } else {
+                this.runtime.logger.warn("miner.socket_error", meta);
             }
         });
         socket.on("close", () => {

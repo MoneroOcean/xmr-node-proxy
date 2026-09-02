@@ -2,8 +2,10 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
+const net = require("node:net");
 const powHash = require("node-powhash");
 const test = require("node:test");
+const { once } = require("node:events");
 
 const { bufferToBigIntLE } = require("../proxy/common");
 const {
@@ -216,6 +218,8 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 assert.equal(harness.primaryPool.submitRequests[0].params.mixhash, share.mixhash);
                 assert.equal(harness.primaryPool.submitRequests[0].params.nonce, share.nonce);
                 assert.equal(harness.primaryPool.submitRequests[0].params.result, share.result);
+                assert.match(harness.getLogOutput(), /share\.upstream/);
+                assert.doesNotMatch(harness.getLogOutput(), /share\.block_found/);
 
                 const badMixReply = await client.request({
                     id: 15,
@@ -354,6 +358,21 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
             } finally {
                 await client.close();
             }
+        });
+    });
+
+    test("malformed public traffic is logged once without a duplicate socket warning", async () => {
+        await withHarness("malformed public traffic is logged once without a duplicate socket warning", {}, async (harness) => {
+            for (let index = 0; index < 2; index += 1) {
+                const socket = net.connect({ host: "127.0.0.1", port: harness.minerPort });
+                await once(socket, "connect");
+                socket.write("not-json\nalso-not-json\n");
+                await once(socket, "close");
+            }
+
+            const badJsonLogs = harness.loggerLines.filter((line) => line.includes("WRN worker miner.bad_json"));
+            assert.equal(badJsonLogs.length, 1);
+            assert.doesNotMatch(harness.getLogOutput(), /miner\.socket_error.*Malformed miner JSON/);
         });
     });
 
