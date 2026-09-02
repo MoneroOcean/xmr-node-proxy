@@ -9,12 +9,13 @@ const { createShareProcessor } = require("./share");
 function createCoins(options = {}) {
     const {
         instanceId = Buffer.from([0, 0, 0]),
-        logger = null
+        logger = null,
+        workerCount = Number(process.env.XNP_WORKER_COUNT) || 1
     } = options;
 
     // This is the built-in XMR-style protocol implementation used by both master and worker runtimes.
     // Compatibility fixes belong here instead of a config-selected module layer so behavior stays consistent.
-    const { detectAlgo, hashFunc, hashFuncC29 } = createAlgoTools({ logger });
+    const { detectAlgo, hashFunc, hashFuncC29 } = createAlgoTools({ logger, workerCount });
     const { BlockTemplate, MasterBlockTemplate, getJob, getMasterJob } = createTemplateTools({
         blobTypeGrin,
         c29ProofSize,

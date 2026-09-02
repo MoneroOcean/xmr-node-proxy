@@ -1,8 +1,29 @@
 "use strict";
 
+const os = require("node:os");
 const powHash = require("node-powhash");
 
 const { DEFAULT_ALGO } = require("../proxy/common");
+
+const RANDOMX_CACHE_BYTES = 256 * 1024 * 1024;
+const RANDOMX_CACHE_MAX = 5;
+const RANDOMX_SYSTEM_RESERVE_BYTES = 512 * 1024 * 1024;
+
+function selectRandomxCacheSize(totalMemory, workerCount) {
+    const workers = Number.isInteger(workerCount) && workerCount > 0 ? workerCount : 1;
+    const usableMemory = Math.max(0, totalMemory - RANDOMX_SYSTEM_RESERVE_BYTES);
+    const perWorkerBudget = usableMemory / 2 / workers;
+    return Math.max(1, Math.min(RANDOMX_CACHE_MAX, Math.floor(perWorkerBudget / RANDOMX_CACHE_BYTES)));
+}
+
+function resolveRandomxCacheSize(workerCount, env = process.env, totalMemory = os.totalmem()) {
+    if (env.XNP_RANDOMX_CACHE_SIZE === undefined) return selectRandomxCacheSize(totalMemory, workerCount);
+    const configured = Number(env.XNP_RANDOMX_CACHE_SIZE);
+    if (!Number.isInteger(configured) || configured < 1 || configured > RANDOMX_CACHE_MAX) {
+        throw new Error(`XNP_RANDOMX_CACHE_SIZE must be an integer from 1 to ${RANDOMX_CACHE_MAX}`);
+    }
+    return configured;
+}
 
 function randomxHasher(variant) {
     return (convertedBlob, blockTemplate) => powHash.randomx(convertedBlob, Buffer.from(blockTemplate.seed_hash, "hex"), variant);
@@ -70,7 +91,11 @@ const C29_HASHERS = {
     c29b: (header, ring) => powHash.c29b(header, ring),
     c29i: (header, ring) => powHash.c29i(header, ring)
 };
-function createAlgoTools({ logger = null } = {}) {
+function createAlgoTools({ logger = null, workerCount = 1 } = {}) {
+    // Candidate verification is infrequent. Bound its 256 MiB seed caches across
+    // workers so small hosts stay alive while larger hosts retain useful seeds.
+    powHash.setRandomxCacheSize(resolveRandomxCacheSize(workerCount));
+
     function detectAlgo(defaultAlgoSet, blockVersion) {
         if (hasRandomxForkPair(defaultAlgoSet)) return randomxForkAlgo(blockVersion);
         const algos = Object.keys(defaultAlgoSet);
@@ -105,5 +130,7 @@ function randomxForkAlgo(blockVersion) {
     return blockVersion >= 12 ? "rx/0" : "cn/r";
 }
 module.exports = {
-    createAlgoTools
+    createAlgoTools,
+    resolveRandomxCacheSize,
+    selectRandomxCacheSize
 };

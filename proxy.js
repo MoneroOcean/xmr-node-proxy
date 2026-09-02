@@ -133,7 +133,8 @@ class ClusterRuntimeManager {
     spawnWorker() {
         const env = {
             XNP_CONFIG_PATH: this.configPath,
-            XNP_INSTANCE_ID: this.instanceId.toString("hex")
+            XNP_INSTANCE_ID: this.instanceId.toString("hex"),
+            XNP_WORKER_COUNT: String(this.workerCount)
         };
 
         const worker = cluster.fork(env);

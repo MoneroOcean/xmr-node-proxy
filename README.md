@@ -57,6 +57,7 @@ as a zero-trust public pool edge.
 
 - Normal miner-difficulty shares intentionally trust the miner-reported `result` so the proxy can keep per-share CPU cost low.
 - The proxy still enforces job, template, and duplicate-share checks locally and can verify pool-target candidates, but it is not a hostile-miner firewall.
+- RandomX candidate verification automatically budgets its 256 MiB seed caches across workers: it reserves 512 MiB for the host, uses at most half the remainder, and retains one to five caches per worker. Set `XNP_RANDOMX_CACHE_SIZE=1` to force the low-memory behavior when a container reports more RAM than it can use.
 - If you need full cryptographic verification of every submitted share from untrusted miners, enforce that in a different layer.
 
 ## Quick Start

@@ -5,6 +5,7 @@ const powHash = require("node-powhash");
 const test = require("node:test");
 
 const createCoins = require("../coins/core");
+const { resolveRandomxCacheSize, selectRandomxCacheSize } = require("../coins/algos");
 const { createTemplateTools } = require("../coins/template");
 const { CircularBuffer } = require("../proxy/common");
 const { MinerProtocol } = require("../proxy/miner");
@@ -29,6 +30,18 @@ function createProxyTemplate(overrides = {}) {
 }
 
 test.describe("xmr-node-proxy coin helpers", { concurrency: false }, () => {
+    test("sizes retained RandomX seed caches for available memory and workers", () => {
+        const gib = 1024 ** 3;
+        assert.equal(selectRandomxCacheSize(gib, 1), 1);
+        assert.equal(selectRandomxCacheSize(16 * gib, 8), 3);
+        assert.equal(selectRandomxCacheSize(32 * gib, 8), 5);
+        assert.equal(resolveRandomxCacheSize(8, { XNP_RANDOMX_CACHE_SIZE: "2" }, gib), 2);
+        assert.throws(
+            () => resolveRandomxCacheSize(1, { XNP_RANDOMX_CACHE_SIZE: "6" }, gib),
+            /integer from 1 to 5/
+        );
+    });
+
     test("MasterBlockTemplate normalizes floating upstream pool target difficulty", () => {
         const coins = createCoins({
             instanceId: INSTANCE_ID
