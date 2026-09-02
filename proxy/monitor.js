@@ -308,6 +308,11 @@ class ProxyMonitor {
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+        tbody td:first-child {
+            overflow-wrap: anywhere;
+            text-overflow: clip;
+            white-space: normal;
+        }
         tbody tr:hover {
             background: var(--hover);
         }

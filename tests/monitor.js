@@ -64,7 +64,7 @@ test.describe("xmr-node-proxy monitor", { concurrency: false }, () => {
                     connectTime: now - 60_000,
                     pool: "gulf.moneroocean.stream",
                     agent: "xmrig/6.22 linux",
-                    logString: "worker-a (127.0.0.1)",
+                    logString: "worker-with-a-complete-long-name (127.0.0.1)",
                     algo: "rx/0"
                 }
             ]
@@ -74,6 +74,9 @@ test.describe("xmr-node-proxy monitor", { concurrency: false }, () => {
         assert.match(html, /xnp-monitor-theme/);
         assert.match(html, /data-sort-type="number"/);
         assert.match(html, /tooltiptext/);
+        assert.match(html, /tbody td:first-child/);
+        assert.match(html, /overflow-wrap: anywhere/);
+        assert.match(html, /worker-with-a-complete-long-name \(127\.0\.0\.1\)/);
         assert.match(html, /xmrig\/6\.22 linux/);
         assert.match(html, /https:\/\/moneroocean\.stream\/#\/dashboard\?addr=wallet-demo/);
     });
