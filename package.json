@@ -49,6 +49,11 @@
     "node-blocktemplate": "github:MoneroOcean/node-blocktemplate#v15.8.21",
     "node-powhash": "github:MoneroOcean/node-powhash#v29.2.6"
   },
+  "allowScripts": {
+    "blake2@5.0.1": true,
+    "github:MoneroOcean/node-blocktemplate#445da89a5b58d30aa7715220ce5d31eccc8dcd52": true,
+    "github:MoneroOcean/node-powhash#e10984a2a21cf48fd4e48a60874eb2a4de2cc5fa": true
+  },
   "devDependencies": {
     "eslint": "^9.39.4",
     "globals": "^17.6.0"
