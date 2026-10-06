@@ -411,6 +411,8 @@ performs live network connections.
 `No active block template`
 
 - The upstream pool is connected but has not produced a usable job yet.
+- New miner logins wait up to 5 seconds for a template before being rejected.
+  They complete automatically when a usable pool job arrives.
 
 `Unauthorized access`
 

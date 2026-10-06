@@ -4,6 +4,7 @@ const { CircularBuffer, createLineParser, randomId, respondToHttpProbe, writeJso
 const NONCE_32_HEX = /^[0-9a-f]{8}$/;
 const NONCE_64_HEX = /^[0-9a-f]{16}$/;
 const NOISY_WARNING_INTERVAL_MS = 30_000;
+const LOGIN_TEMPLATE_WAIT_MS = 5_000;
 const ROUTINE_SOCKET_ERROR_CODES = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT"]);
 // Cap the per-job nonce dedup list. The list is appended for every
 // well-formed submit before any difficulty/validity gate, and each submit
@@ -201,6 +202,7 @@ class MinerProtocol {
     constructor(runtime) {
         this.runtime = runtime;
         this.noisyWarnings = new Map();
+        this.pendingLogins = new Map();
     }
 
     warnNoisy(event, meta) {
@@ -269,6 +271,7 @@ class MinerProtocol {
             }
         });
         socket.on("close", () => {
+            this.clearPendingLogin(socket);
             const minerId = socket.minerId;
             if (!minerId) return;
             const miner = this.runtime.activeMiners.get(minerId);
@@ -327,12 +330,54 @@ class MinerProtocol {
         return METHOD_HANDLERS.get(method);
     }
     handleLogin(socket, request, portData, pushMessage, reply, replyFinal) {
+        if (this.pendingLogins.has(socket)) {
+            reply("Login already pending");
+            return;
+        }
         const params = this.getParams(request.params, replyFinal);
         if (!params) return;
         const miner = this.createMinerSession(socket, portData, pushMessage, params);
+        if (miner.error === "No active block template") {
+            // Keep one unregistered login per socket; retry validation and pool selection
+            // when work arrives, rather than forcing miners into a reconnect loop.
+            const timer = setTimeout(() => {
+                this.clearPendingLogin(socket);
+                if (socket.destroyed) return;
+                this.warnNoisy("miner.login_rejected", {
+                    miner: miner.logString || socket.remoteAddress,
+                    reason: miner.error
+                });
+                replyFinal(miner.error);
+            }, LOGIN_TEMPLATE_WAIT_MS);
+            timer.unref();
+            this.pendingLogins.set(socket, {
+                timer,
+                resume: () => this.handleLogin(socket, request, portData, pushMessage, reply, replyFinal)
+            });
+            return;
+        }
         if (!this.acceptLogin(miner, socket, replyFinal)) return;
         this.registerMiner(socket, request, miner);
         reply(null, this.loginReply(miner));
+    }
+    clearPendingLogin(socket) {
+        const pending = this.pendingLogins.get(socket);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pendingLogins.delete(socket);
+    }
+    retryPendingLogins() {
+        if (!this.runtime.isPoolUsable(this.runtime.chooseInitialPool())) return;
+        for (const [socket, pending] of this.pendingLogins) {
+            this.clearPendingLogin(socket);
+            if (!socket.destroyed) pending.resume();
+        }
+    }
+    stopPendingLogins() {
+        for (const socket of this.pendingLogins.keys()) {
+            this.clearPendingLogin(socket);
+            socket.destroy();
+        }
     }
     registerMiner(socket, request, miner) {
         socket.minerId = miner.id;

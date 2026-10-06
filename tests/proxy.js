@@ -76,6 +76,16 @@ async function withHarness(name, options, run) {
     }
 }
 
+async function clearWorkerTemplates(harness) {
+    const worker = harness.app.getState().worker;
+    await harness.waitFor(() => [...worker.pools.values()].every((pool) => pool.activeBlockTemplate));
+    for (const pool of worker.pools.values()) {
+        pool.active = false;
+        pool.activeBlockTemplate = null;
+    }
+    return worker;
+}
+
 test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () => {
     test.after(() => {
         if (!runtimeFailureState.details.length || runtimeFailureState.printed) return;
@@ -137,6 +147,196 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 assert.equal(typeof forwarded.poolNonce, "number");
                 assert.equal(typeof forwarded.workerNonce, "number");
             } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("miner logins wait for a template and receive one initial job each", async () => {
+        await withHarness("miner logins wait for a template and receive one initial job each", {}, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const clients = [new JsonLineClient(harness.minerPort), new JsonLineClient(harness.minerPort)];
+            try {
+                await Promise.all(clients.map((client) => client.connect()));
+                let replyCount = 0;
+                const replies = clients.map((client, index) => client.request({
+                    id: 100 + index,
+                    method: "login",
+                    params: { login: `wallet-wait-${index}`, pass: "worker-wait" }
+                }).then((reply) => {
+                    replyCount += 1;
+                    return reply;
+                }));
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 2);
+                assert.equal(replyCount, 0);
+                assert.equal(worker.activeMiners.size, 0);
+                assert.ok(clients.every((client) => !client.socket.destroyed));
+
+                worker.handleMasterMessage({
+                    type: "newBlockTemplate", host: "127.0.0.1", data: harness.primaryPool.template
+                });
+                for (const reply of await Promise.all(replies)) {
+                    assert.equal(reply.error, null);
+                    assert.equal(reply.result.status, "OK");
+                    assert.ok(reply.result.job.job_id);
+                }
+                assert.equal(worker.activeMiners.size, 2);
+                assert.equal(worker.protocol.pendingLogins.size, 0);
+                assert.ok(clients.every((client) => client.pushes.length === 0));
+                assert.doesNotMatch(harness.getLogOutput(), /miner\.login_rejected/);
+            } finally {
+                await Promise.all(clients.map((client) => client.close()));
+            }
+        });
+    });
+
+    test("a repeated pending login keeps the original request and session", async () => {
+        await withHarness("a repeated pending login keeps the original request and session", {}, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                const originalReply = client.request({
+                    id: 110, method: "login", params: { login: "wallet-original", pass: "worker-original" }
+                });
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
+                const duplicateReply = await client.request({
+                    id: 111, method: "login", params: { login: "wallet-duplicate", pass: "worker-duplicate" }
+                });
+                assert.equal(duplicateReply.error.message, "Login already pending");
+                assert.equal(worker.protocol.pendingLogins.size, 1);
+                assert.equal(client.socket.destroyed, false);
+                worker.handleMasterMessage({
+                    type: "newBlockTemplate", host: "127.0.0.1", data: harness.primaryPool.template
+                });
+                const reply = await originalReply;
+                assert.equal(reply.error, null);
+                assert.equal(worker.activeMiners.size, 1);
+                assert.equal(worker.activeMiners.get(reply.result.id).user, "wallet-original");
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("a backup template completes a login waiting for the primary", async () => {
+        await withHarness("a backup template completes a login waiting for the primary", {
+            backupTemplate: createTemplate({ jobId: "job-wait-backup", templateId: "tpl-wait-backup" })
+        }, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                const login = client.request({
+                    id: 120, method: "login", params: { login: "wallet-backup-wait", pass: "worker-backup-wait" }
+                });
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
+                worker.handleMasterMessage({
+                    type: "newBlockTemplate", host: "localhost", data: harness.backupPool.template
+                });
+                const reply = await login;
+                assert.equal(reply.error, null);
+                assert.equal(worker.activeMiners.get(reply.result.id).pool, "localhost");
+                assert.equal(worker.pools.get("127.0.0.1").activeBlockTemplate, null);
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("invalid and unauthorized logins fail immediately without a template", async () => {
+        await withHarness("invalid and unauthorized logins fail immediately without a template", {
+            accessControlEnabled: true, accessEntries: { "wallet-ok": "secret" }
+        }, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            for (const [id, params, reason] of [
+                [130, { login: "wallet-ok+0", pass: "secret" }, "Invalid difficulty"],
+                [131, { login: "wallet-denied", pass: "wrong" }, "Unauthorized access"]
+            ]) {
+                const client = new JsonLineClient(harness.minerPort);
+                await client.connect();
+                try {
+                    const reply = await client.request({ id, method: "login", params });
+                    assert.equal(reply.error.message, reason);
+                    assert.equal(worker.protocol.pendingLogins.size, 0);
+                    assert.equal(worker.activeMiners.size, 0);
+                } finally {
+                    await client.close();
+                }
+            }
+        });
+    });
+
+    test("disconnect removes a pending login before a later template", async () => {
+        await withHarness("disconnect removes a pending login before a later template", {}, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                client.socket.write(`${JSON.stringify({
+                    id: 140, method: "login", params: { login: "wallet-wait-close", pass: "worker-wait-close" }
+                })}\n`);
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
+                await client.close();
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 0);
+                worker.handleMasterMessage({
+                    type: "newBlockTemplate", host: "127.0.0.1", data: harness.primaryPool.template
+                });
+                assert.equal(worker.activeMiners.size, 0);
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("worker shutdown closes sockets with pending logins", { timeout: 5_000 }, async () => {
+        await withHarness("worker shutdown closes sockets with pending logins", {}, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const client = new JsonLineClient(harness.minerPort);
+            await client.connect();
+            try {
+                client.socket.write(`${JSON.stringify({
+                    id: 150, method: "login", params: { login: "wallet-wait-stop", pass: "worker-wait-stop" }
+                })}\n`);
+                await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
+                const closed = once(client.socket, "close");
+                await worker.stop();
+                await closed;
+                assert.equal(worker.protocol.pendingLogins.size, 0);
+                assert.equal(worker.activeMiners.size, 0);
+            } finally {
+                await client.close();
+            }
+        });
+    });
+
+    test("pending login times out after 5 seconds without registering a miner", async (context) => {
+        await withHarness("pending login times out after 5 seconds without registering a miner", {}, async (harness) => {
+            const worker = await clearWorkerTemplates(harness);
+            const client = new JsonLineClient(harness.minerPort);
+            const connected = once(worker.servers[0].server, "connection");
+            await client.connect();
+            const [serverSocket] = await connected;
+            try {
+                context.mock.timers.enable({ apis: ["setTimeout"] });
+                const received = once(serverSocket, "data");
+                client.socket.write(`${JSON.stringify({
+                    id: 160, method: "login", params: { login: "wallet-wait-timeout", pass: "worker-wait-timeout" }
+                })}\n`);
+                await received;
+                assert.equal(worker.protocol.pendingLogins.size, 1);
+                context.mock.timers.tick(4_999);
+                assert.equal(worker.protocol.pendingLogins.size, 1);
+                assert.equal(client.pushes.length, 0);
+                context.mock.timers.tick(1);
+                context.mock.timers.reset();
+                const reply = await client.waitFor((message) => message.id === 160);
+                assert.equal(reply.error.message, "No active block template");
+                assert.equal(worker.protocol.pendingLogins.size, 0);
+                assert.equal(worker.activeMiners.size, 0);
+                await harness.waitFor(() => client.socket.destroyed);
+            } finally {
+                context.mock.timers.reset();
                 await client.close();
             }
         });

@@ -56,6 +56,7 @@ class WorkerController {
         this.servers = [];
     }
     stopMiners() {
+        this.protocol.stopPendingLogins();
         for (const miner of this.activeMiners.values()) {
             try {
                 miner.socket.destroy();
@@ -140,6 +141,7 @@ class WorkerController {
         if (!pool) return true;
         if (!this.setNewBlockTemplate(pool, message.data)) return true; // bad template; keep last good
         this.pushPoolJobs(message.host);
+        this.protocol.retryPendingLogins();
         return true;
     }
     setNewBlockTemplate(pool, data) {
