@@ -9,6 +9,7 @@ const { once } = require("node:events");
 
 const { bufferToBigIntLE } = require("../proxy/common");
 const {
+    FakePool,
     JsonLineClient,
     createRavenTemplateBlob,
     createTemplate,
@@ -87,6 +88,35 @@ async function clearWorkerTemplates(harness) {
 }
 
 test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () => {
+    test("failed harness startup closes owned pools and removes its temporary config", async () => {
+        const pools = [];
+        let tempDir;
+        const originalStart = FakePool.prototype.start;
+        const originalMkdtemp = fs.mkdtemp;
+        FakePool.prototype.start = async function() {
+            pools.push(this);
+            return originalStart.call(this);
+        };
+        fs.mkdtemp = async (...args) => {
+            tempDir = await originalMkdtemp(...args);
+            return tempDir;
+        };
+        const failure = new Error("fixture startup failure");
+        try {
+            await assert.rejects(startHarness({
+                backupTemplate: createTemplate(),
+                coinsFactory() { throw failure; }
+            }), (error) => error === failure);
+            assert.equal(pools.length, 2);
+            assert.ok(pools.every((pool) => pool.server === null && pool.sockets.size === 0));
+            await assert.rejects(fs.stat(tempDir), { code: "ENOENT" });
+        } finally {
+            FakePool.prototype.start = originalStart;
+            fs.mkdtemp = originalMkdtemp;
+            for (const pool of pools) await pool.stop();
+            if (tempDir) await fs.rm(tempDir, { recursive: true, force: true });
+        }
+    });
     test.after(() => {
         if (!runtimeFailureState.details.length || runtimeFailureState.printed) return;
         process.stdout.write(`\nStandalone runtime failure logs\n${formatRuntimeFailureDetails(runtimeFailureState.details)}\n`);
@@ -232,11 +262,11 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 });
                 await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
                 worker.handleMasterMessage({
-                    type: "newBlockTemplate", host: "localhost", data: harness.backupPool.template
+                    type: "newBlockTemplate", host: "127.0.0.2", data: harness.backupPool.template
                 });
                 const reply = await login;
                 assert.equal(reply.error, null);
-                assert.equal(worker.activeMiners.get(reply.result.id).pool, "localhost");
+                assert.equal(worker.activeMiners.get(reply.result.id).pool, "127.0.0.2");
                 assert.equal(worker.pools.get("127.0.0.1").activeBlockTemplate, null);
             } finally {
                 await client.close();
@@ -496,7 +526,7 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 harness.primaryPool.destroyConnections();
                 await harness.waitFor(() => {
                     const miner = harness.app.getState().worker.activeMiners.get(loginReply.result.id);
-                    return miner && miner.pool === "localhost";
+                    return miner && miner.pool === "127.0.0.2";
                 });
 
                 const newJobReply = await client.request({

@@ -302,121 +302,133 @@ function httpRequest({ port, pathName = "/", headers = {} }) {
 
 async function startHarness(options = {}) {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "xnp-test-"));
-    const accessControlPath = path.join(tempDir, "access-control.json");
-    const accessEntries = options.accessEntries || {};
-    const primaryHost = "127.0.0.1";
-    const backupHost = "localhost";
-    await fs.writeFile(accessControlPath, JSON.stringify(accessEntries, null, 2));
-
-    const primaryPool = new FakePool(options.primaryTemplate || createTemplate(), { hostname: primaryHost });
-    await primaryPool.start();
-
+    let app;
+    let primaryPool;
     let backupPool = null;
-    if (options.backupTemplate) {
-        backupPool = new FakePool(options.backupTemplate, { hostname: backupHost });
-        await backupPool.start();
-    }
+    const stop = async () => {
+        const errors = [];
+        for (const close of [() => app?.stop(), () => backupPool?.stop(), () => primaryPool?.stop(), () => fs.rm(tempDir, { recursive: true, force: true })]) {
+            try { await close(); } catch (error) { errors.push(error); }
+        }
+        if (errors.length) throw new AggregateError(errors, "Harness cleanup failed");
+    };
+    try {
+        const accessControlPath = path.join(tempDir, "access-control.json");
+        const accessEntries = options.accessEntries || {};
+        const primaryHost = "127.0.0.1";
+        // A literal second loopback avoids bind/connect disagreement from DNS ADDRCONFIG in containers.
+        const backupHost = "127.0.0.2";
+        await fs.writeFile(accessControlPath, JSON.stringify(accessEntries, null, 2));
 
-    const config = {
-        pools: [
-            {
-                hostname: primaryHost,
-                port: primaryPool.port,
+        primaryPool = new FakePool(options.primaryTemplate || createTemplate(), { hostname: primaryHost });
+        await primaryPool.start();
+
+        if (options.backupTemplate) {
+            backupPool = new FakePool(options.backupTemplate, { hostname: backupHost });
+            await backupPool.start();
+        }
+
+        const config = {
+            pools: [
+                {
+                    hostname: primaryHost,
+                    port: primaryPool.port,
+                    ssl: false,
+                    allowSelfSignedSSL: false,
+                    share: 100,
+                    username: "wallet-primary",
+                    password: "proxy",
+                    keepAlive: true,
+                    algo: options.poolAlgo || "test/algo",
+                    algo_perf: options.poolAlgoPerf || { [options.poolAlgo || "test/algo"]: 1 },
+                    blob_type: options.poolBlobType ?? 0,
+                    default: true
+                }
+            ],
+            listeningPorts: [
+                {
+                    port: 0,
+                    ssl: false,
+                    diff: options.listeningDiff || 100
+                }
+            ],
+            bindAddress: primaryHost,
+            developerShare: 0,
+            accessControl: {
+                enabled: options.accessControlEnabled === true,
+                controlFile: accessControlPath
+            },
+            httpEnable: options.httpEnable === true,
+            httpAddress: primaryHost,
+            httpPort: options.httpEnable ? 0 : 8081,
+            httpUser: options.httpUser || "",
+            httpPass: options.httpPass || "",
+            difficultySettings: {
+                minDiff: 1,
+                maxDiff: 100000,
+                shareTargetTime: 30
+            }
+        };
+
+        if (backupPool) {
+            config.pools.push({
+                hostname: backupHost,
+                port: backupPool.port,
                 ssl: false,
                 allowSelfSignedSSL: false,
-                share: 100,
-                username: "wallet-primary",
+                share: 0,
+                username: "wallet-backup",
                 password: "proxy",
                 keepAlive: true,
-                algo: options.poolAlgo || "test/algo",
-                algo_perf: options.poolAlgoPerf || { [options.poolAlgo || "test/algo"]: 1 },
-                blob_type: options.poolBlobType ?? 0,
-                default: true
-            }
-        ],
-        listeningPorts: [
-            {
-                port: 0,
-                ssl: false,
-                diff: options.listeningDiff || 100
-            }
-        ],
-        bindAddress: primaryHost,
-        developerShare: 0,
-        accessControl: {
-            enabled: options.accessControlEnabled === true,
-            controlFile: accessControlPath
-        },
-        httpEnable: options.httpEnable === true,
-        httpAddress: primaryHost,
-        httpPort: options.httpEnable ? 0 : 8081,
-        httpUser: options.httpUser || "",
-        httpPass: options.httpPass || "",
-        difficultySettings: {
-            minDiff: 1,
-            maxDiff: 100000,
-            shareTargetTime: 30
+                algo: "test/algo",
+                algo_perf: { "test/algo": 1 },
+                blob_type: 0,
+                default: false
+            });
         }
-    };
 
-    if (backupPool) {
-        config.pools.push({
-            hostname: backupHost,
-            port: backupPool.port,
-            ssl: false,
-            allowSelfSignedSSL: false,
-            share: 0,
-            username: "wallet-backup",
-            password: "proxy",
-            keepAlive: true,
-            algo: "test/algo",
-            algo_perf: { "test/algo": 1 },
-            blob_type: 0,
-            default: false
+        const logger = options.logger || createBufferedLogger("xnp");
+        app = createStandaloneApp(config, {
+            configPath: path.join(tempDir, "config.json"),
+            coinsFactory: options.coinsFactory || createFakeCoins,
+            logger
         });
-    }
+        app.start();
 
-    const logger = options.logger || createBufferedLogger("xnp");
-    const app = createStandaloneApp(config, {
-        configPath: path.join(tempDir, "config.json"),
-        coinsFactory: options.coinsFactory || createFakeCoins,
-        logger
-    });
-    app.start();
-
-    await waitFor(() => primaryPool.loginRequests.length > 0);
-    if (backupPool) {
-        await waitFor(() => backupPool.loginRequests.length > 0);
-    }
-
-    const minerPort = app.getBoundPorts()[0].actualPort;
-    let monitorPort = null;
-    if (options.httpEnable) {
-        await waitFor(() => app.getState().master.monitor.server?.address()?.port);
-        monitorPort = app.getState().master.monitor.server.address().port;
-    }
-
-    return {
-        accessControlPath,
-        app,
-        backupPool,
-        httpRequest,
-        minerPort,
-        monitorPort,
-        primaryPool,
-        tempDir,
-        waitFor,
-        loggerLines: logger.lines || [],
-        getLogOutput() {
-            return (logger.lines || []).join("\n");
-        },
-        async stop() {
-            await app.stop();
-            if (backupPool) await backupPool.stop();
-            await primaryPool.stop();
-            await fs.rm(tempDir, { recursive: true, force: true });
+        await waitFor(() => primaryPool.loginRequests.length > 0);
+        if (backupPool) {
+            await waitFor(() => backupPool.loginRequests.length > 0);
         }
-    };
+
+        const minerPort = app.getBoundPorts()[0].actualPort;
+        let monitorPort = null;
+        if (options.httpEnable) {
+            await waitFor(() => app.getState().master.monitor.server?.address()?.port);
+            monitorPort = app.getState().master.monitor.server.address().port;
+        }
+
+        return {
+            accessControlPath,
+            app,
+            backupPool,
+            httpRequest,
+            minerPort,
+            monitorPort,
+            primaryPool,
+            tempDir,
+            waitFor,
+            loggerLines: logger.lines || [],
+            getLogOutput() {
+                return (logger.lines || []).join("\n");
+            },
+            stop
+        };
+    } catch (error) {
+        try { await stop(); } catch (cleanupError) {
+            throw new AggregateError([error, cleanupError], "Harness startup and cleanup failed");
+        }
+        throw error;
+    }
 }
 
 module.exports = {

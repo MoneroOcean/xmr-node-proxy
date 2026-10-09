@@ -5,9 +5,60 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { spawnSync } = require("node:child_process");
 
 const { AccessControl, createLogger, humanHashrate, normalizeConfig, parseArgs } = require("../proxy/common");
 const { collectWorkerStats } = require("../proxy/stats");
+
+function runInstallerFixture(nodeVersion, npmVersion) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "xnp-install-"));
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    fs.copyFileSync(path.join(__dirname, "../install.sh"), path.join(root, "install.sh"));
+    for (const file of ["package.json", "proxy.js", "config.json", "cert.key", "cert.pem"]) fs.writeFileSync(path.join(root, file), "");
+    for (const command of ["dirname", "uname"]) fs.symlinkSync(`/usr/bin/${command}`, path.join(bin, command));
+    const script = (name, body) => fs.writeFileSync(path.join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o700 });
+    script("id", "echo 0");
+    script("apt-get", 'echo PACKAGES >> "$INSTALLER_MUTATIONS"; for package in "$@"; do case "$package" in nodejs|npm) echo RUNTIME_PACKAGE >> "$INSTALLER_MUTATIONS" ;; esac; done');
+    if (nodeVersion) script("node", 'version="$INSTALLER_NODE_VERSION"; case "$2" in *"[0]"*) echo "${version%%.*}" ;; *"[1]"*) rest="${version#*.}"; echo "${rest%%.*}" ;; *) echo "$version" ;; esac');
+    if (npmVersion) script("npm", 'if [[ "$1" == --version ]]; then echo "$INSTALLER_NPM_VERSION"; else echo NPM_RUN >> "$INSTALLER_MUTATIONS"; fi');
+    for (const command of ["git", "openssl", "python3", "make", "g++"]) script(command, "exit 0");
+    try {
+        const result = spawnSync("/bin/bash", [path.join(root, "install.sh")], {
+            env: { ...process.env, PATH: bin, INSTALLER_NODE_VERSION: nodeVersion || "", INSTALLER_NPM_VERSION: npmVersion || "", INSTALLER_MUTATIONS: path.join(root, "mutations") },
+            encoding: "utf8", timeout: 5000
+        });
+        return { status: result.status, output: result.stdout + result.stderr, mutations: fs.existsSync(path.join(root, "mutations")) ? fs.readFileSync(path.join(root, "mutations"), "utf8") : "" };
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+}
+
+test.describe("install.sh runtime prerequisites", { skip: process.platform !== "linux" }, () => {
+    for (const [name, nodeVersion, npmVersion] of [
+        ["old Node", "22.8.0", "11.10.0"],
+        ["old npm", "22.9.0", "11.9.9"],
+        ["missing Node", null, "11.10.0"],
+        ["missing npm", "22.9.0", null],
+        ["prerelease npm", "22.9.0", "11.10.0-beta.1"],
+        ["oversized version", "999999999999999999999.0.0", "11.10.0"]
+    ]) {
+        test(`rejects ${name} before package-manager mutation`, () => {
+            const result = runInstallerFixture(nodeVersion, npmVersion);
+            assert.equal(result.status, 1);
+            assert.equal(result.mutations, "");
+        });
+    }
+    for (const [nodeVersion, npmVersion] of [["22.9.0", "11.10.0"], ["24.0.0", "12.0.0"]]) {
+        test(`accepts supported runtime ${nodeVersion}/${npmVersion} without replacing it`, () => {
+            const result = runInstallerFixture(nodeVersion, npmVersion);
+            assert.equal(result.status, 0, result.output);
+            assert.match(result.mutations, /PACKAGES/);
+            assert.match(result.mutations, /NPM_RUN/);
+            assert.doesNotMatch(result.mutations, /RUNTIME_PACKAGE/);
+        });
+    }
+});
 
 test.describe("xmr-node-proxy common helpers", { concurrency: false }, () => {
     test("createLogger can omit timestamps when requested", () => {

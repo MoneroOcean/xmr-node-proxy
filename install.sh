@@ -14,6 +14,24 @@ if [[ "$(uname -s)" != "Linux" ]]; then
     exit 1
 fi
 
+version_at_least() {
+    # Stable numeric releases only; bounded decimal components avoid octal/overflow parsing.
+    if [[ ! "$1" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]]; then return 1; fi
+    local major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]}))
+    (( major > $2 || (major == $2 && minor >= $3) ))
+}
+
+for runtime in node npm; do
+    if ! command -v "$runtime" >/dev/null 2>&1; then
+        echo "Preinstall Node.js 22.9.0+ and npm 11.10.0+ before running install.sh. Missing: $runtime"
+        exit 1
+    fi
+done
+if ! version_at_least "$(node -p 'process.versions.node')" 22 9 || ! version_at_least "$(npm --version)" 11 10; then
+    echo "Preinstall Node.js 22.9.0+ and npm 11.10.0+ before running install.sh."
+    exit 1
+fi
+
 if [[ $(id -u) -eq 0 ]]; then
     SUDO=
 elif command -v sudo >/dev/null; then
@@ -26,7 +44,7 @@ fi
 install_with_apt() {
     export DEBIAN_FRONTEND=noninteractive
     $SUDO apt-get update
-    $SUDO apt-get install -y --no-install-recommends g++ git libboost-date-time-dev libsodium-dev make nodejs npm openssl python3
+    $SUDO apt-get install -y --no-install-recommends g++ git libboost-date-time-dev libsodium-dev make openssl python3
 }
 
 install_with_dnf_family() {
@@ -34,11 +52,7 @@ install_with_dnf_family() {
 
     $SUDO "$package_manager" makecache
 
-    if $SUDO "$package_manager" module list nodejs >/dev/null 2>&1; then
-        $SUDO "$package_manager" module enable -y nodejs:20 || true
-    fi
-
-    $SUDO "$package_manager" install -y gcc-c++ git boost-devel libsodium-devel make nodejs npm openssl python3
+    $SUDO "$package_manager" install -y gcc-c++ git boost-devel libsodium-devel make openssl python3
 }
 
 if command -v apt-get >/dev/null 2>&1; then
@@ -58,14 +72,6 @@ for command_name in git node npm openssl python3 make g++; do
         exit 1
     fi
 done
-
-NODE_MAJOR=$(node -p 'Number(process.versions.node.split(".")[0])')
-NODE_MINOR=$(node -p 'Number(process.versions.node.split(".")[1])')
-if [[ "$NODE_MAJOR" -lt 22 || ( "$NODE_MAJOR" -eq 22 && "$NODE_MINOR" -lt 9 ) ]]; then
-    # Stop early instead of leaving the checkout in a half-installed state with an unsupported Node runtime.
-    echo "Node.js 22.9.0+ is required, but the package manager installed $(node -v)."
-    exit 1
-fi
 
 cd "$ROOT_DIR"
 npm install --no-audit --no-fund --no-package-lock --min-release-age=7

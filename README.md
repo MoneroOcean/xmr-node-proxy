@@ -62,7 +62,7 @@ as a zero-trust public pool edge.
 
 ## Quick Start
 
-1. Install Node.js `22.9.0+` and the build tools required for the native hashing modules.
+1. Install Node.js `22.9.0+`, npm `11.10.0+`, and the build tools required for the native hashing modules.
 2. Clone the repo and install dependencies:
 
 ```bash
@@ -138,7 +138,7 @@ Manual local install:
 
 - best if you want a quick local setup on a supported Linux host without typing each install step yourself
 - it sets up packages, local npm dependencies, default config, and self-signed certs
-- downside: it still installs software directly onto the host machine and depends on distro package availability for Node.js `22.9.0+`
+- downside: it still installs software directly onto the host machine; supported Node.js and npm must already be installed
 
 Docker:
 
@@ -149,7 +149,7 @@ Docker:
 For most beginners:
 
 - use manual local install if you want to learn the moving parts
-- use `install.sh` if you are on Ubuntu and want the fastest host install
+- use `install.sh` on a supported Linux host after installing the required Node.js and npm versions
 - use Docker if you already know basic container workflows or want cleaner isolation
 
 ## install.sh
@@ -171,13 +171,14 @@ What it does:
 Requirements:
 
 - run it from an `xmr-node-proxy` checkout
+- preinstalled Node.js `22.9.0+` and npm `11.10.0+` on `PATH`; stock distro versions may be older
 - a Linux host with `apt`, `dnf`, or `yum`
 - Ubuntu 26.04, Rocky/Alma/RHEL 9+, or another compatible distro with equivalent package names
 - either `root` or a normal user with `sudo`
 
 Safety notes:
 
-- if apt installs a Node.js older than `22.9.0`, the script stops with an explicit error
+- the script checks Node.js and npm before changing system packages; it does not install, downgrade, or replace either runtime
 - if only one of `cert.key` or `cert.pem` exists, the script stops instead of overwriting the surviving file
 
 After it completes:
