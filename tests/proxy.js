@@ -88,6 +88,13 @@ async function clearWorkerTemplates(harness) {
 }
 
 test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () => {
+    test("backup pools keep distinct identities on the default loopback address", async () => {
+        await withHarness("default loopback pool identities", { backupTemplate: createTemplate() }, async (harness) => {
+            assert.equal(harness.primaryPool.server.address().address, "127.0.0.1");
+            assert.equal(harness.backupPool.server.address().address, "127.0.0.1");
+            assert.deepEqual([...harness.app.getState().worker.pools.keys()], ["127.0.0.1", "localhost"]);
+        });
+    });
     test("failed harness startup closes owned pools and removes its temporary config", async () => {
         const pools = [];
         let tempDir;
@@ -262,11 +269,11 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 });
                 await harness.waitFor(() => worker.protocol.pendingLogins.size === 1);
                 worker.handleMasterMessage({
-                    type: "newBlockTemplate", host: "127.0.0.2", data: harness.backupPool.template
+                    type: "newBlockTemplate", host: "localhost", data: harness.backupPool.template
                 });
                 const reply = await login;
                 assert.equal(reply.error, null);
-                assert.equal(worker.activeMiners.get(reply.result.id).pool, "127.0.0.2");
+                assert.equal(worker.activeMiners.get(reply.result.id).pool, "localhost");
                 assert.equal(worker.pools.get("127.0.0.1").activeBlockTemplate, null);
             } finally {
                 await client.close();
@@ -526,7 +533,7 @@ test.describe("xmr-node-proxy standalone runtime", { concurrency: false }, () =>
                 harness.primaryPool.destroyConnections();
                 await harness.waitFor(() => {
                     const miner = harness.app.getState().worker.activeMiners.get(loginReply.result.id);
-                    return miner && miner.pool === "127.0.0.2";
+                    return miner && miner.pool === "localhost";
                 });
 
                 const newJobReply = await client.request({

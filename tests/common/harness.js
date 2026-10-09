@@ -316,15 +316,15 @@ async function startHarness(options = {}) {
         const accessControlPath = path.join(tempDir, "access-control.json");
         const accessEntries = options.accessEntries || {};
         const primaryHost = "127.0.0.1";
-        // A literal second loopback avoids bind/connect disagreement from DNS ADDRCONFIG in containers.
-        const backupHost = "127.0.0.2";
+        // Keep distinct pool identities without requiring an extra OS loopback alias.
+        const backupHost = "localhost";
         await fs.writeFile(accessControlPath, JSON.stringify(accessEntries, null, 2));
 
         primaryPool = new FakePool(options.primaryTemplate || createTemplate(), { hostname: primaryHost });
         await primaryPool.start();
 
         if (options.backupTemplate) {
-            backupPool = new FakePool(options.backupTemplate, { hostname: backupHost });
+            backupPool = new FakePool(options.backupTemplate, { hostname: primaryHost });
             await backupPool.start();
         }
 
